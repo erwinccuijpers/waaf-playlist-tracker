@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WAAF Playlist Tracker</title>
+<style>
+  :root{--bg:#0d0d0f;--card:#17171b;--line:#26262c;--txt:#f4f4f5;--mut:#9a9aa3;--grn:#1db954;--red:#ff5a5a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  header{padding:28px 24px 8px}
+  h1{margin:0;font-size:22px;letter-spacing:.2px}
+  .sub{color:var(--mut);font-size:13px;margin-top:4px}
+  .wrap{max-width:1120px;margin:0 auto;padding:16px 24px 70px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 26px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .kpi .lbl{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  .kpi .val{font-size:23px;font-weight:600;margin-top:6px}
+  .kpi .sub{font-size:12px;margin-top:4px}
+  .pos{color:var(--grn)} .neg{color:var(--red)}
+  h2{font-size:14px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;margin:28px 0 10px}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:right;font-size:13.5px;border-bottom:1px solid var(--line)}
+  th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  th:first-child,td:first-child{text-align:left}
+  tbody tr:last-child td{border-bottom:none}
+  tfoot td{font-weight:700;background:#1d1d22}
+  a{color:var(--grn);text-decoration:none}
+  .rank{color:var(--mut);width:26px}
+  .note{color:var(--mut);font-size:12.5px;line-height:1.7;margin-top:10px}
+  .err{background:#2a1414;border:1px solid #5a2a2a;color:#ffb4b4;padding:14px;border-radius:10px;margin-top:16px;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>WAAF Playlist Tracker</h1>
+  <div class="sub" id="asof">loading…</div>
+</header>
+<div class="wrap">
+  <div class="kpis" id="kpis"></div>
+
+  <h2>Playlists — what's working</h2>
+  <table id="playlists"><thead><tr>
+    <th>Playlist</th><th>Followers</th><th>Total streams</th><th>New streams</th><th>Streams / day</th><th>Est. revenue</th><th>Ad spend</th><th>Rev / Spend</th>
+  </tr></thead><tbody></tbody><tfoot></tfoot></table>
+
+  <h2>Artists — ranked by monthly listeners</h2>
+  <table id="artists"><thead><tr>
+    <th class="rank">#</th><th>Artist</th><th>Monthly listeners</th><th>Followers</th><th>List. growth</th><th>Foll. growth</th>
+  </tr></thead><tbody></tbody></table>
+
+  <div class="note" id="legend"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ---- CONFIG ----
+const SUPABASE_URL  = "https://bxeqafbvzkpoccqjxuqi.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4ZXFhZmJ2emtwb2NjcWp4dXFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0OTQ0ODcsImV4cCI6MjA5NjA3MDQ4N30.5VT50kYJXiRhdLilugQMAachwV7HDLLK7LdrMhkzUKs";
+// ----------------
+
+const fmt = n => n==null ? "—" : Number(n).toLocaleString("en-US");
+const usd = n => n==null ? "—" : (n<0?"-$":"$")+Math.abs(Number(n)).toLocaleString("en-US",{maximumFractionDigits:0});
+const cls = n => n==null?"":n>0?"pos":n<0?"neg":"";
+const signed = n => n==null?"—":(n>=0?"+":"")+fmt(n);
+const days = (a,b) => Math.round((new Date(b)-new Date(a))/86400000);
+
+function showError(m){document.getElementById("asof").textContent="couldn't load";
+  document.querySelector(".wrap").insertAdjacentHTML("afterbegin",`<div class="err">${m}</div>`);}
+
+// cumulative playlist total at a given date = sum over artists of their latest snapshot on/before date
+function totalAt(rows, date){
+  const byA={};
+  for(const r of rows){ if(r.as_of<=date){ const c=byA[r.artist_id]; if(!c||r.as_of>c.as_of) byA[r.artist_id]=r; } }
+  return Object.values(byA).reduce((a,r)=>a+Number(r.cumulative_streams),0);
+}
+
+async function main(){
+  if(SUPABASE_URL.includes("YOUR_PROJECT")){ showError("Not connected — fill in the config."); return; }
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  let r;
+  try{ r = await Promise.all([
+    sb.from("settings").select("*"),
+    sb.from("playlists").select("*"),
+    sb.from("follower_snapshots").select("*").order("captured_on"),
+    sb.from("stream_counts").select("*").order("as_of"),
+    sb.from("spend_counts").select("*").order("as_of"),
+    sb.from("artists").select("*"),
+    sb.from("artist_snapshots").select("*").order("captured_on"),
+  ]); }catch(e){ showError("Couldn't reach Supabase ("+e.message+")."); return; }
+  const bad=r.find(x=>x.error);
+  if(bad){ showError("Couldn't load: "+bad.error.message+". Did migrate_v3.sql run?"); return; }
+  const [S,P,F,SC,SP,A,AS]=r.map(x=>x.data);
+  const rate=(S.find(x=>x.key==="payout_rate_per_stream")||{}).value||0.003;
+
+  const scBy={}; SC.forEach(x=>(scBy[x.playlist_id] ??= []).push(x));
+  const spBy={}; SP.forEach(x=>(spBy[x.playlist_id] ??= []).push(x));
+  const folBy={}; F.forEach(x=>(folBy[x.playlist_id] ??= []).push(x));
+
+  let tStreams=0,tNew=0,tSpend=0,tFollowers=0,latest="",anySpend=false;
+  const rows=P.map(pl=>{
+    const sc=scBy[pl.id]||[];
+    const dates=[...new Set(sc.map(x=>x.as_of))].sort();
+    const last=dates[dates.length-1], prev=dates[dates.length-2];
+    const total=dates.length? totalAt(sc,last):0;
+    const prevTot=prev? totalAt(sc,prev):null;
+    const nu=prevTot!=null? total-prevTot:null;
+    const perDay=(nu!=null&&prev)? nu/days(prev,last):null;
+    if(last>latest) latest=last;
+    // spend
+    const sp=spBy[pl.id]||[]; const spend=sp.length? Number(sp[sp.length-1].cumulative_spend):null;
+    if(spend!=null) anySpend=true;
+    const rev=total*rate, rs=spend? rev/spend:null;
+    const fs=folBy[pl.id]||[]; const fol=fs.length? fs[fs.length-1].followers:null;
+    tStreams+=total; if(nu!=null)tNew+=nu; if(spend!=null)tSpend+=spend; if(fol!=null)tFollowers+=fol;
+    return {name:pl.name,url:pl.url,fol,total,nu,perDay,rev,spend,rs};
+  }).sort((a,b)=>b.total-a.total);
+
+  const tRev=tStreams*rate, tRS=tSpend? tRev/tSpend:null;
+  document.getElementById("asof").textContent =
+    "Latest counts "+(latest||"—")+"  ·  $"+rate+"/stream"+(anySpend?"":"  ·  add spend to unlock revenue-vs-spend");
+
+  const kpi=(l,v,s,sc)=>`<div class="kpi"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub ${sc||''}">${s||''}</div></div>`;
+  document.getElementById("kpis").innerHTML =
+    kpi("Total streams", fmt(tStreams), "tracked artists")
+   +kpi("New streams", signed(tNew), "since last count", cls(tNew))
+   +kpi("Est. revenue", usd(tRev), "all-time × $"+rate)
+   +kpi("Ad spend", anySpend?usd(tSpend):"—", anySpend?"cumulative":"not entered yet")
+   +kpi("Rev / Spend", tRS==null?"—":tRS.toFixed(2)+"x", "1.00x = break-even", tRS==null?"":cls(tRS-1))
+   +kpi("Followers", fmt(tFollowers), "across playlists");
+
+  document.querySelector("#playlists tbody").innerHTML = rows.map(r=>`<tr>
+    <td><a href="${r.url}" target="_blank">${r.name}</a></td>
+    <td>${fmt(r.fol)}</td><td>${fmt(r.total)}</td>
+    <td class="${cls(r.nu)}">${signed(r.nu)}</td>
+    <td>${r.perDay==null?"—":fmt(Math.round(r.perDay))}</td>
+    <td>${usd(r.rev)}</td><td>${usd(r.spend)}</td>
+    <td class="${r.rs==null?"":cls(r.rs-1)}">${r.rs==null?"—":r.rs.toFixed(2)+"x"}</td></tr>`).join("");
+  document.querySelector("#playlists tfoot").innerHTML=`<tr>
+    <td>Total</td><td>${fmt(tFollowers)}</td><td>${fmt(tStreams)}</td>
+    <td class="${cls(tNew)}">${signed(tNew)}</td><td>—</td>
+    <td>${usd(tRev)}</td><td>${anySpend?usd(tSpend):"—"}</td>
+    <td class="${tRS==null?"":cls(tRS-1)}">${tRS==null?"—":tRS.toFixed(2)+"x"}</td></tr>`;
+
+  const asBy={}; AS.forEach(s=>(asBy[s.artist_id] ??= []).push(s));
+  const arts=A.map(a=>{const arr=asBy[a.id]||[],last=arr[arr.length-1]||{},first=arr[0]||{};
+    return {name:a.name,url:a.url,ml:last.monthly_listeners??null,fol:last.followers??null,
+      mlG:(last.monthly_listeners!=null&&first.monthly_listeners!=null)?last.monthly_listeners-first.monthly_listeners:null,
+      folG:(last.followers!=null&&first.followers!=null)?last.followers-first.followers:null};
+  }).filter(a=>a.ml!=null).sort((a,b)=>b.ml-a.ml);
+  document.querySelector("#artists tbody").innerHTML=arts.map((a,i)=>`<tr>
+    <td class="rank">${i+1}</td><td>${a.url?`<a href="${a.url}" target="_blank">${a.name}</a>`:a.name}</td>
+    <td>${fmt(a.ml)}</td><td>${fmt(a.fol)}</td>
+    <td class="${cls(a.mlG)}">${signed(a.mlG)}</td><td class="${cls(a.folG)}">${signed(a.folG)}</td></tr>`).join("");
+
+  document.getElementById("legend").innerHTML =
+    "<b>What's working:</b> sort by <b>New streams</b> / <b>Streams&nbsp;per&nbsp;day</b> — that's current momentum, independent of how long ago you counted. "
+   +"<b>Rev/Spend</b> lights up once ad spend is entered (1.00x = streams repaid the ads). "
+   +"Counts are date-stamped, so weekly, monthly or irregular drops all compute a correct per-day rate. "
+   +"Streams cover your tracked artists only — true totals are higher.";
+}
+main();
+</script>
+</body>
+</html>
