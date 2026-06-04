@@ -50,6 +50,9 @@
     <th>Week</th><th>Streams</th><th>WoW</th><th>Ad spend</th><th>Est. revenue</th><th>Net</th><th>Rev / Spend</th>
   </tr></thead><tbody></tbody></table>
 
+  <h2>Per-playlist weekly streams — green = up vs prior week</h2>
+  <table id="plweekly"><thead><tr id="plweeklyHead"></tr></thead><tbody></tbody></table>
+
   <h2>Artists — ranked by monthly listeners</h2>
   <table id="artists"><thead><tr>
     <th class="rank">#</th><th>Artist</th><th>Monthly listeners</th><th>Followers</th><th>List. growth</th><th>Foll. growth</th>
@@ -112,6 +115,33 @@ async function main(){
         <td class="${cls(wow)}">${wow==null?"—":(wow>=0?"+":"")+(wow*100).toFixed(0)+"%"}</td>
         <td>${usd(c)}</td><td>${usd(rev)}</td><td class="${cls(net)}">${usd(net)}</td>
         <td>${rs==null?"—":rs.toFixed(2)+"x"}</td></tr>`;
+    }).join("");
+  })();
+
+  // per-playlist weekly streams matrix (WoW colour) + avg WoW ranking
+  (function(){
+    const weeks=[...new Set((WM||[]).map(x=>x.week_of))].sort();
+    if(!weeks.length) return;
+    const m={}; (WM||[]).forEach(x=>{(m[x.playlist_id] ??= {})[x.week_of]=x.streams||0;});
+    const plName=id=>(P.find(p=>p.id===id)||{}).name||id;
+    document.getElementById("plweeklyHead").innerHTML=
+      `<th>Playlist</th>`+weeks.map(w=>`<th>${w.slice(5)}</th>`).join("")+`<th>Avg WoW</th>`;
+    const rows=Object.keys(m).map(pid=>{
+      const series=weeks.map(w=>(w in m[pid])?m[pid][w]:null);
+      let gs=[],prev=null;
+      series.forEach(s=>{ if(s!=null){ if(prev!=null&&prev>0) gs.push((s-prev)/prev); prev=s; } });
+      const avg=gs.length?gs.reduce((a,b)=>a+b,0)/gs.length:null;
+      const latest=[...series].reverse().find(s=>s!=null)||0;
+      return {pid,series,avg,latest};
+    }).sort((a,b)=>(b.avg??-9)-(a.avg??-9));
+    document.querySelector("#plweekly tbody").innerHTML=rows.map(r=>{
+      let prev=null;
+      const cells=r.series.map(s=>{
+        let c=""; if(s!=null&&prev!=null) c=s>prev?"pos":s<prev?"neg":"";
+        const txt=s==null?"·":fmt(s); if(s!=null) prev=s;
+        return `<td class="${c}">${txt}</td>`;
+      }).join("");
+      return `<tr><td>${plName(r.pid)}</td>${cells}<td class="${cls(r.avg)}">${r.avg==null?"—":(r.avg>=0?"+":"")+(r.avg*100).toFixed(0)+"%"}</td></tr>`;
     }).join("");
   })();
 
