@@ -35,6 +35,7 @@
 <header>
   <h1>WAAF Playlist Tracker</h1>
   <div class="sub" id="asof">loading…</div>
+  <div class="sub" style="margin-top:6px"><a href="update.html">✏️ Update data →</a></div>
 </header>
 <div class="wrap">
   <div class="kpis" id="kpis"></div>
@@ -43,6 +44,11 @@
   <table id="playlists"><thead><tr>
     <th>Playlist</th><th>Followers</th><th>Total streams</th><th>New streams</th><th>Streams / day</th><th>Est. revenue</th><th>Ad spend</th><th>Rev / Spend</th>
   </tr></thead><tbody></tbody><tfoot></tfoot></table>
+
+  <h2>Weekly history — manual tracking (Apr 15 – May 27)</h2>
+  <table id="weekly"><thead><tr>
+    <th>Week</th><th>Streams</th><th>WoW</th><th>Ad spend</th><th>Est. revenue</th><th>Net</th><th>Rev / Spend</th>
+  </tr></thead><tbody></tbody></table>
 
   <h2>Artists — ranked by monthly listeners</h2>
   <table id="artists"><thead><tr>
@@ -87,11 +93,27 @@ async function main(){
     sb.from("spend_counts").select("*").order("as_of"),
     sb.from("artists").select("*"),
     sb.from("artist_snapshots").select("*").order("captured_on"),
+    sb.from("weekly_metrics").select("*").order("week_of"),
   ]); }catch(e){ showError("Couldn't reach Supabase ("+e.message+")."); return; }
   const bad=r.find(x=>x.error);
   if(bad){ showError("Couldn't load: "+bad.error.message+". Did migrate_v3.sql run?"); return; }
-  const [S,P,F,SC,SP,A,AS]=r.map(x=>x.data);
+  const [S,P,F,SC,SP,A,AS,WM]=r.map(x=>x.data);
   const rate=(S.find(x=>x.key==="payout_rate_per_stream")||{}).value||0.003;
+
+  // weekly history (manual tracking period, from weekly_metrics / your Excel)
+  (function(){
+    const wk={}; (WM||[]).forEach(x=>{const k=x.week_of;(wk[k] ??= {s:0,c:0}); wk[k].s+=x.streams||0; wk[k].c+=Number(x.ad_spend||0);});
+    const weeks=Object.keys(wk).sort(); let prevS=null;
+    const tb=document.querySelector("#weekly tbody"); if(!tb) return;
+    tb.innerHTML=weeks.map(w=>{
+      const {s,c}=wk[w]; const rev=s*rate, net=rev-c, rs=c?rev/c:null;
+      const wow=prevS?(s-prevS)/prevS:null; prevS=s;
+      return `<tr><td>${w}</td><td>${fmt(s)}</td>
+        <td class="${cls(wow)}">${wow==null?"—":(wow>=0?"+":"")+(wow*100).toFixed(0)+"%"}</td>
+        <td>${usd(c)}</td><td>${usd(rev)}</td><td class="${cls(net)}">${usd(net)}</td>
+        <td>${rs==null?"—":rs.toFixed(2)+"x"}</td></tr>`;
+    }).join("");
+  })();
 
   const scBy={}; SC.forEach(x=>(scBy[x.playlist_id] ??= []).push(x));
   const spBy={}; SP.forEach(x=>(spBy[x.playlist_id] ??= []).push(x));
