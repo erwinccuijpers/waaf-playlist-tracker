@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WAAF Tracker — Update</title>
+<style>
+  :root{--bg:#0d0d0f;--card:#17171b;--line:#26262c;--txt:#f4f4f5;--mut:#9a9aa3;--grn:#1db954;--red:#ff5a5a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:22px;margin:0 0 2px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:22px}
+  h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;margin:26px 0 10px;display:flex;justify-content:space-between;align-items:center}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  label{font-size:12px;color:var(--mut);display:block;margin-bottom:5px}
+  input,select{background:#0e0e11;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:9px 10px;font-size:14px;width:100%}
+  input:focus,select:focus{outline:none;border-color:var(--grn)}
+  .row{display:grid;grid-template-columns:1fr 1fr 110px;gap:8px;align-items:end;margin-bottom:8px}
+  .srow{display:grid;grid-template-columns:1fr 130px 140px;gap:8px;align-items:center;margin-bottom:8px}
+  .srow .nm{font-size:14px}
+  .srow .hint{font-size:11px;color:var(--mut);margin-top:3px}
+  .calc{font-size:12px;color:var(--grn);text-align:right}
+  button{background:var(--grn);color:#04210f;border:0;border-radius:8px;padding:11px 18px;font-size:14px;font-weight:700;cursor:pointer}
+  button.ghost{background:transparent;color:var(--mut);border:1px solid var(--line);font-weight:500;padding:7px 12px;font-size:12px}
+  button:disabled{opacity:.5;cursor:default}
+  .addbtn{background:transparent;color:var(--grn);border:1px dashed var(--line);font-weight:600;width:100%;padding:9px}
+  .msg{margin-top:12px;font-size:13px;padding:10px 12px;border-radius:8px;display:none}
+  .ok{background:#0f2417;border:1px solid #1d5236;color:#7ee2a8}
+  .bad{background:#2a1414;border:1px solid #5a2a2a;color:#ffb4b4}
+  .top{display:flex;justify-content:space-between;align-items:center}
+  #login{max-width:340px;margin:60px auto}
+  #login input{margin-bottom:10px}
+  a{color:var(--grn);text-decoration:none}
+  .datebar{margin-bottom:12px}
+  .datebar input{max-width:200px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- LOGIN -->
+  <div id="login" style="display:none">
+    <h1>WAAF Tracker</h1>
+    <div class="sub">Sign in to update the data</div>
+    <div class="card">
+      <label>Email</label><input id="email" type="email" autocomplete="username" />
+      <label>Password</label><input id="pw" type="password" autocomplete="current-password" />
+      <button id="loginBtn" style="width:100%;margin-top:6px">Sign in</button>
+      <div class="msg bad" id="loginMsg"></div>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" style="display:none">
+    <div class="top">
+      <div><h1>Update data</h1><div class="sub" id="who"></div></div>
+      <button class="ghost" id="logoutBtn">Sign out</button>
+    </div>
+
+    <h2><span>① Streams — last 7 days per artist</span></h2>
+    <div class="card">
+      <div class="datebar"><label>Count date (the Wednesday)</label><input id="sDate" type="date" /></div>
+      <div id="streamRows"></div>
+      <button class="addbtn" id="addRow" type="button">+ Add another artist · playlist</button>
+      <div style="margin-top:14px"><button id="saveStreams">Save streams</button></div>
+      <div class="msg" id="streamMsg"></div>
+    </div>
+
+    <h2><span>② Ad spend — total spent so far per playlist</span></h2>
+    <div class="card">
+      <div class="datebar"><label>Spend date</label><input id="pDate" type="date" /></div>
+      <div id="spendRows"></div>
+      <div style="margin-top:14px"><button id="saveSpend">Save spend</button></div>
+      <div class="msg" id="spendMsg"></div>
+    </div>
+
+    <div class="sub" style="margin-top:22px">→ <a id="dashLink" href="#" target="_blank">View the dashboard</a></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL="https://bxeqafbvzkpoccqjxuqi.supabase.co";
+const SUPABASE_ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4ZXFhZmJ2emtwb2NjcWp4dXFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0OTQ0ODcsImV4cCI6MjA5NjA3MDQ4N30.5VT50kYJXiRhdLilugQMAachwV7HDLLK7LdrMhkzUKs";
+const DASH="https://erwinccuijpers.github.io/waaf-playlist-tracker/";
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON);
+const $=id=>document.getElementById(id);
+const today=()=>new Date().toISOString().slice(0,10);
+const num=v=>{const n=parseFloat(String(v).replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
+function flash(el,ok,t){el.className="msg "+(ok?"ok":"bad");el.textContent=t;el.style.display="block";}
+
+let PL=[], ART=[], SC=[], SP=[];
+// latest cumulative strictly before a date, for a pair
+function prevCum(pid,aid,date){
+  let best=null;
+  for(const r of SC){ if(r.playlist_id===pid&&r.artist_id===aid&&r.as_of<date){ if(!best||r.as_of>best.as_of) best=r; } }
+  return best?Number(best.cumulative_streams):0;
+}
+// most recent weekly delta for a pair (for the hint)
+function lastDelta(pid,aid){
+  const rows=SC.filter(r=>r.playlist_id===pid&&r.artist_id===aid).sort((a,b)=>a.as_of<b.as_of?-1:1);
+  if(rows.length<2) return null;
+  return Number(rows[rows.length-1].cumulative_streams)-Number(rows[rows.length-2].cumulative_streams);
+}
+function latestSpend(pid){
+  const rows=SP.filter(r=>r.playlist_id===pid).sort((a,b)=>a.as_of<b.as_of?-1:1);
+  return rows.length?Number(rows[rows.length-1].cumulative_spend):0;
+}
+const plName=id=>(PL.find(p=>p.id===id)||{}).name||id;
+const artName=id=>(ART.find(a=>a.id===id)||{}).name||id;
+
+function optionsHTML(items,val){return items.map(i=>`<option value="${i.id}" ${i.id===val?"selected":""}>${i.name}</option>`).join("");}
+
+function streamRow(pid,aid){
+  const d=document.createElement("div"); d.className="srow"; d.dataset.fixed=pid&&aid?"1":"";
+  if(pid&&aid){
+    const hint=lastDelta(pid,aid);
+    d.innerHTML=`<div><div class="nm">${artName(aid)} · ${plName(pid)}</div>
+      <div class="hint">${hint!=null?"last week: "+hint.toLocaleString():"first count"}</div>
+      <input type="hidden" class="pid" value="${pid}"><input type="hidden" class="aid" value="${aid}"></div>
+      <div></div>
+      <input class="v" type="number" min="0" placeholder="last 7 days">`;
+  } else {
+    d.innerHTML=`<select class="aid">${optionsHTML(ART)}</select>
+      <select class="pid">${optionsHTML(PL)}</select>
+      <input class="v" type="number" min="0" placeholder="last 7 days">`;
+  }
+  return d;
+}
+
+function buildStreamRows(){
+  const box=$("streamRows"); box.innerHTML="";
+  // one row per existing (playlist,artist) pair, grouped by artist
+  const pairs=[...new Set(SC.map(r=>r.playlist_id+"|"+r.artist_id))]
+    .map(k=>k.split("|"))
+    .sort((a,b)=>artName(a[1]).localeCompare(artName(b[1]))||plName(a[0]).localeCompare(plName(b[0])));
+  pairs.forEach(([pid,aid])=>box.appendChild(streamRow(pid,aid)));
+}
+
+function buildSpendRows(){
+  const box=$("spendRows"); box.innerHTML="";
+  PL.forEach(p=>{
+    const prev=latestSpend(p.id);
+    const d=document.createElement("div"); d.className="srow"; d.dataset.pid=p.id;
+    d.innerHTML=`<div><div class="nm">${p.name}</div><div class="hint">recorded so far: $${prev.toLocaleString()}</div></div>
+      <input class="v" type="number" min="0" placeholder="new total $" value="">
+      <div class="calc" data-prev="${prev}">—</div>`;
+    const inp=d.querySelector(".v"), calc=d.querySelector(".calc");
+    inp.addEventListener("input",()=>{const v=num(inp.value); calc.textContent=v==null?"—":"+ $"+Math.max(v-prev,0).toLocaleString()+" since last";});
+    box.appendChild(d);
+  });
+}
+
+async function loadData(){
+  const [pl,ar,sc,sp]=await Promise.all([
+    sb.from("playlists").select("id,name"),
+    sb.from("artists").select("id,name"),
+    sb.from("stream_counts").select("*"),
+    sb.from("spend_counts").select("*"),
+  ]);
+  PL=pl.data||[]; ART=ar.data||[]; SC=sc.data||[]; SP=sp.data||[];
+  $("sDate").value=today(); $("pDate").value=today();
+  buildStreamRows(); buildSpendRows();
+}
+
+async function saveStreams(){
+  const date=$("sDate").value; const m=$("streamMsg");
+  if(!date){flash(m,false,"Pick a date.");return;}
+  const rows=[...document.querySelectorAll("#streamRows .srow")].map(d=>{
+    const pid=d.querySelector(".pid").value, aid=d.querySelector(".aid").value, v=num(d.querySelector(".v").value);
+    return {pid,aid,v};
+  }).filter(r=>r.v!=null&&r.v>=0&&r.pid&&r.aid);
+  if(!rows.length){flash(m,false,"Enter at least one number.");return;}
+  const payload=rows.map(r=>({playlist_id:r.pid,artist_id:r.aid,as_of:date,cumulative_streams:prevCum(r.pid,r.aid,date)+r.v}));
+  $("saveStreams").disabled=true;
+  const {error}=await sb.from("stream_counts").upsert(payload,{onConflict:"playlist_id,artist_id,as_of"});
+  $("saveStreams").disabled=false;
+  if(error){flash(m,false,"Error: "+error.message);return;}
+  flash(m,true,`Saved ${payload.length} stream count(s) for ${date}.`);
+  await loadData();
+}
+
+async function saveSpend(){
+  const date=$("pDate").value; const m=$("spendMsg");
+  if(!date){flash(m,false,"Pick a date.");return;}
+  const rows=[...document.querySelectorAll("#spendRows .srow")].map(d=>{
+    const v=num(d.querySelector(".v").value); return {pid:d.dataset.pid,v};
+  }).filter(r=>r.v!=null&&r.v>=0);
+  if(!rows.length){flash(m,false,"Enter at least one total.");return;}
+  const payload=rows.map(r=>({playlist_id:r.pid,as_of:date,cumulative_spend:r.v}));
+  $("saveSpend").disabled=true;
+  const {error}=await sb.from("spend_counts").upsert(payload,{onConflict:"playlist_id,as_of"});
+  $("saveSpend").disabled=false;
+  if(error){flash(m,false,"Error: "+error.message);return;}
+  flash(m,true,`Saved spend totals for ${payload.length} playlist(s).`);
+  await loadData();
+}
+
+async function showApp(session){
+  $("login").style.display="none"; $("app").style.display="block";
+  $("who").textContent="Signed in as "+session.user.email;
+  $("dashLink").href=DASH;
+  await loadData();
+}
+function showLogin(){ $("app").style.display="none"; $("login").style.display="block"; }
+
+async function init(){
+  $("addRow").onclick=()=>$("streamRows").appendChild(streamRow());
+  $("saveStreams").onclick=saveStreams;
+  $("saveSpend").onclick=saveSpend;
+  $("logoutBtn").onclick=async()=>{await sb.auth.signOut(); showLogin();};
+  $("loginBtn").onclick=async()=>{
+    const {data,error}=await sb.auth.signInWithPassword({email:$("email").value.trim(),password:$("pw").value});
+    if(error){flash($("loginMsg"),false,error.message);return;}
+    showApp(data.session);
+  };
+  const {data}=await sb.auth.getSession();
+  if(data.session) showApp(data.session); else showLogin();
+}
+init();
+</script>
+</body>
+</html>
