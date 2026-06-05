@@ -18,6 +18,8 @@
   input:focus,select:focus{outline:none;border-color:var(--grn)}
   .row{display:grid;grid-template-columns:1fr 1fr 110px;gap:8px;align-items:end;margin-bottom:8px}
   .srow{display:grid;grid-template-columns:1fr 130px 140px;gap:8px;align-items:center;margin-bottom:8px}
+  .srow2{display:grid;grid-template-columns:1fr 78px 88px 88px;gap:6px;align-items:center;margin-bottom:8px}
+  .srow2 input,.srow2 select{padding:8px 7px;font-size:13px}
   .srow .nm{font-size:14px}
   .srow .hint{font-size:11px;color:var(--mut);margin-top:3px}
   .calc{font-size:12px;color:var(--grn);text-align:right}
@@ -58,11 +60,14 @@
       <button class="ghost" id="logoutBtn">Sign out</button>
     </div>
 
-    <h2><span>① Streams — new since last count, per artist</span></h2>
+    <h2><span>① Streams — per artist · playlist</span></h2>
     <div class="card">
       <div class="datebar"><label>Count date (the Wednesday)</label><input id="sDate" type="date" /></div>
+      <div class="srow2" style="margin-bottom:6px;color:var(--mut);font-size:11px">
+        <div>artist · playlist</div><div>mode</div><div>streams</div><div>listeners</div></div>
       <div id="streamRows"></div>
-      <button class="addbtn" id="addRow" type="button">+ Add another artist · playlist</button>
+      <div style="font-size:11px;color:var(--mut);margin-top:8px">
+        <b>+ add</b> = the new number to add (weekly 7-day count) &nbsp;·&nbsp; <b>= total</b> = paste the running 12-month total, tool diffs it. &nbsp;Leave a row blank to skip it.</div>
       <div style="margin-top:14px"><button id="saveStreams">Save streams</button></div>
       <div class="msg" id="streamMsg"></div>
     </div>
@@ -83,6 +88,20 @@
       <div class="msg" id="folMsg"></div>
     </div>
 
+    <h2><span>➕ Add a playlist to an artist</span></h2>
+    <div class="card">
+      <label>Artist</label><select id="apArtist"></select>
+      <label style="margin-top:10px">Playlist</label><select id="apPlaylist"></select>
+      <div id="apNew" style="display:none;margin-top:10px">
+        <label>New playlist link</label>
+        <input id="apUrl" type="text" placeholder="https://open.spotify.com/playlist/..." />
+        <label style="margin-top:8px">Playlist name</label>
+        <input id="apName" type="text" placeholder="e.g. Lo-fi Nights" />
+      </div>
+      <div style="margin-top:12px"><button id="apSave">Add</button></div>
+      <div class="msg" id="apMsg"></div>
+    </div>
+
     <div class="sub" style="margin-top:22px">→ <a id="dashLink" href="#" target="_blank">View the dashboard</a></div>
   </div>
 </div>
@@ -98,7 +117,7 @@ const today=()=>new Date().toISOString().slice(0,10);
 const num=v=>{const n=parseFloat(String(v).replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
 function flash(el,ok,t){el.className="msg "+(ok?"ok":"bad");el.textContent=t;el.style.display="block";}
 
-let PL=[], ART=[], SC=[], SP=[], FOL=[];
+let PL=[], ART=[], SC=[], SP=[], FOL=[], PA=[];
 // latest cumulative strictly before a date, for a pair
 function prevCum(pid,aid,date){
   let best=null;
@@ -125,28 +144,22 @@ const artName=id=>(ART.find(a=>a.id===id)||{}).name||id;
 function optionsHTML(items,val){return items.map(i=>`<option value="${i.id}" ${i.id===val?"selected":""}>${i.name}</option>`).join("");}
 
 function streamRow(pid,aid){
-  const d=document.createElement("div"); d.className="srow"; d.dataset.fixed=pid&&aid?"1":"";
-  if(pid&&aid){
-    const hint=lastDelta(pid,aid);
-    d.innerHTML=`<div><div class="nm">${artName(aid)} · ${plName(pid)}</div>
-      <div class="hint">${hint!=null?"last week: "+hint.toLocaleString():"first count"}</div>
-      <input type="hidden" class="pid" value="${pid}"><input type="hidden" class="aid" value="${aid}"></div>
-      <div></div>
-      <input class="v" type="number" min="0" placeholder="since last count">`;
-  } else {
-    d.innerHTML=`<select class="aid">${optionsHTML(ART)}</select>
-      <select class="pid">${optionsHTML(PL)}</select>
-      <input class="v" type="number" min="0" placeholder="since last count">`;
-  }
+  const d=document.createElement("div"); d.className="srow2"; d.dataset.pid=pid; d.dataset.aid=aid;
+  const hint=lastDelta(pid,aid);
+  d.innerHTML=`<div><div class="nm">${artName(aid)} · ${plName(pid)}</div>
+    <div class="hint">${hint!=null?"last: "+hint.toLocaleString():"first count"}</div></div>
+    <select class="mode"><option value="add">+ add</option><option value="total">= total</option></select>
+    <input class="v" type="number" min="0" placeholder="streams">
+    <input class="lis" type="number" min="0" placeholder="listeners">`;
   return d;
 }
 
 function buildStreamRows(){
   const box=$("streamRows"); box.innerHTML="";
-  // one row per existing (playlist,artist) pair, grouped by artist
-  const pairs=[...new Set(SC.map(r=>r.playlist_id+"|"+r.artist_id))]
-    .map(k=>k.split("|"))
-    .sort((a,b)=>artName(a[1]).localeCompare(artName(b[1]))||plName(a[0]).localeCompare(plName(b[0])));
+  // rows = membership pairs (fall back to whatever has data, before membership is loaded)
+  const pairs = PA.length ? PA.map(r=>[r.playlist_id,r.artist_id])
+    : [...new Set(SC.map(r=>r.playlist_id+"|"+r.artist_id))].map(k=>k.split("|"));
+  pairs.sort((a,b)=>artName(a[1]).localeCompare(artName(b[1]))||plName(a[0]).localeCompare(plName(b[0])));
   pairs.forEach(([pid,aid])=>box.appendChild(streamRow(pid,aid)));
 }
 
@@ -165,27 +178,30 @@ function buildSpendRows(){
 }
 
 async function loadData(){
-  const [pl,ar,sc,sp,fo]=await Promise.all([
-    sb.from("playlists").select("id,name"),
+  const [pl,ar,sc,sp,fo,pa]=await Promise.all([
+    sb.from("playlists").select("id,name,url"),
     sb.from("artists").select("id,name"),
     sb.from("stream_counts").select("*"),
     sb.from("spend_counts").select("*"),
     sb.from("follower_snapshots").select("*"),
+    sb.from("playlist_artists").select("*"),
   ]);
-  PL=pl.data||[]; ART=ar.data||[]; SC=sc.data||[]; SP=sp.data||[]; FOL=fo.data||[];
+  PL=pl.data||[]; ART=ar.data||[]; SC=sc.data||[]; SP=sp.data||[]; FOL=fo.data||[]; PA=pa.data||[];
   $("sDate").value=today(); $("pDate").value=today(); $("fDate").value=today();
-  buildStreamRows(); buildSpendRows(); buildFolRows();
+  buildStreamRows(); buildSpendRows(); buildFolRows(); buildAddPlaylist();
 }
 
 async function saveStreams(){
   const date=$("sDate").value; const m=$("streamMsg");
   if(!date){flash(m,false,"Pick a date.");return;}
-  const rows=[...document.querySelectorAll("#streamRows .srow")].map(d=>{
-    const pid=d.querySelector(".pid").value, aid=d.querySelector(".aid").value, v=num(d.querySelector(".v").value);
-    return {pid,aid,v};
-  }).filter(r=>r.v!=null&&r.v>=0&&r.pid&&r.aid);
+  const rows=[...document.querySelectorAll("#streamRows .srow2")].map(d=>({
+    pid:d.dataset.pid, aid:d.dataset.aid, mode:d.querySelector(".mode").value,
+    v:num(d.querySelector(".v").value), lis:num(d.querySelector(".lis").value)
+  })).filter(r=>r.v!=null&&r.v>=0&&r.pid&&r.aid);
   if(!rows.length){flash(m,false,"Enter at least one number.");return;}
-  const payload=rows.map(r=>({playlist_id:r.pid,artist_id:r.aid,as_of:date,cumulative_streams:prevCum(r.pid,r.aid,date)+r.v}));
+  const payload=rows.map(r=>({playlist_id:r.pid,artist_id:r.aid,as_of:date,
+    cumulative_streams: r.mode==="total" ? Math.round(r.v) : prevCum(r.pid,r.aid,date)+r.v,
+    listeners: r.lis!=null?Math.round(r.lis):null}));
   $("saveStreams").disabled=true;
   const {error}=await sb.from("stream_counts").upsert(payload,{onConflict:"playlist_id,artist_id,as_of"});
   $("saveStreams").disabled=false;
@@ -240,6 +256,35 @@ async function saveFollowers(){
   await loadData();
 }
 
+function buildAddPlaylist(){
+  $("apArtist").innerHTML=optionsHTML(ART);
+  $("apPlaylist").innerHTML=optionsHTML(PL)+'<option value="__new">➕ New playlist…</option>';
+  $("apPlaylist").onchange=()=>{ $("apNew").style.display=$("apPlaylist").value==="__new"?"block":"none"; };
+}
+
+async function savePlaylistMembership(){
+  const m=$("apMsg"), aid=$("apArtist").value; let pid=$("apPlaylist").value, label;
+  if(pid==="__new"){
+    const url=$("apUrl").value.trim(), name=$("apName").value.trim();
+    const mt=url.match(/playlist\/([A-Za-z0-9]+)/);
+    if(!mt){flash(m,false,"Paste a valid Spotify playlist link.");return;}
+    if(!name){flash(m,false,"Enter the playlist name.");return;}
+    pid=mt[1]; label=name;
+    const {error:pe}=await sb.from("playlists").upsert(
+      {id:pid,name:name,owner:"WAAF",url:"https://open.spotify.com/playlist/"+pid},
+      {onConflict:"id",ignoreDuplicates:true});
+    if(pe){flash(m,false,"Playlist error: "+pe.message);return;}
+  } else label=plName(pid);
+  $("apSave").disabled=true;
+  const {error}=await sb.from("playlist_artists").upsert(
+    {playlist_id:pid,artist_id:aid},{onConflict:"playlist_id,artist_id",ignoreDuplicates:true});
+  $("apSave").disabled=false;
+  if(error){flash(m,false,"Error: "+error.message);return;}
+  flash(m,true,`Added ${artName(aid)} → ${label}. It's now in the streams list above.`);
+  $("apUrl").value=""; $("apName").value="";
+  await loadData();
+}
+
 async function showApp(session){
   $("login").style.display="none"; $("app").style.display="block";
   $("who").textContent="Signed in as "+session.user.email;
@@ -249,10 +294,10 @@ async function showApp(session){
 function showLogin(){ $("app").style.display="none"; $("login").style.display="block"; }
 
 async function init(){
-  $("addRow").onclick=()=>$("streamRows").appendChild(streamRow());
   $("saveStreams").onclick=saveStreams;
   $("saveSpend").onclick=saveSpend;
   $("saveFollowers").onclick=saveFollowers;
+  $("apSave").onclick=savePlaylistMembership;
   $("logoutBtn").onclick=async()=>{await sb.auth.signOut(); showLogin();};
   $("loginBtn").onclick=async()=>{
     const {data,error}=await sb.auth.signInWithPassword({email:$("email").value.trim(),password:$("pw").value});
