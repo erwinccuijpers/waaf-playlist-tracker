@@ -143,6 +143,10 @@ const TRACKMAP={
  {pos:29,title:"MEU CORAÇÃO",artist:"MXSTADON",streams:null},
  {pos:30,title:"Come Again - EG Phonk Remix",artist:"Erwin Garcia",streams:43}
 ]}};
+// all-time per-track totals (artist "Popular" pages) — rough strength proxy for tracks we lack 7-day data for. NOT fed into the decay/flags.
+const EST={"PressureX":4095,"Boca Bocaccio":2406,"No Para":1883,"Bapão":1225,
+ "AMNÉSIA":3208,"PERIGOSA DEMAIS":2567,"RUN AWAY":2123,"MONTAGEM TOPO":1292,"MEU CORAÇÃO":1601,
+ "NO BATIDÃO":10415,"Muddy":1143,"Gotta Move":5014,"KOP (Kingdom Of Phonk)":158762};
 const fmt=n=>n==null?"—":Number(n).toLocaleString("en-US");
 
 function fit(pts){ // log-linear: streams = e^(a+b*pos)
@@ -195,7 +199,7 @@ function render(name){
     const cls=t.res==null?"":t.res>18?"pos":t.res<-18?"neg":"";
     const pill=t.res==null?"":t.res>18?'<span class="pill up">move up</span>':t.res<-18?'<span class="pill dn">low</span>':"";
     return `<tr><td>${t.pos}</td><td>${t.title}${t.collab?' <span class="mut">(collab)</span>':''}${t.recent?' <span style="color:#f0c040">(new)</span>':''}${t.anchor?' <span class="mut">(anchor)</span>':''}</td>
-      <td class="mut">${t.artist}</td><td>${fmt(t.streams)}</td>
+      <td class="mut">${t.artist}</td><td>${t.streams!=null?fmt(t.streams):(!t.anchor&&EST[t.title]?'<span class="mut" style="font-size:11px">~'+fmt(EST[t.title])+' all-time</span>':'—')}</td>
       <td class="${cls}">${t.res==null?"—":(t.res>=0?"+":"")+t.res.toFixed(0)+"%"}</td><td>${pill}</td></tr>`;
   }).join("");
   document.getElementById("foot").textContent=`Decay ~${decay.toFixed(1)}%/position · streams halve every ~${half.toFixed(0)} positions · ${data.captured}`;
