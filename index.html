@@ -23,6 +23,8 @@
   th,td{padding:10px 12px;text-align:right;font-size:13.5px;border-bottom:1px solid var(--line)}
   th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
   th:first-child,td:first-child{text-align:left}
+  td{white-space:nowrap}
+  td:first-child{white-space:normal}
   tbody tr:last-child td{border-bottom:none}
   tfoot td{font-weight:700;background:#1d1d22}
   a{color:var(--grn);text-decoration:none}
@@ -42,7 +44,7 @@
 
   <h2>Playlists — what's working</h2>
   <table id="playlists"><thead><tr>
-    <th>Playlist</th><th>Followers</th><th>Total streams</th><th>New streams</th><th>Streams / day</th><th>Est. revenue</th><th>Ad spend</th><th>Rev / Spend</th>
+    <th>Playlist</th><th>Total streams</th><th>New</th><th>Owned %</th><th>Revenue</th><th>Ad spend</th><th>Net</th><th>Rev / Spend</th>
   </tr></thead><tbody></tbody><tfoot></tfoot></table>
 
   <h2>Weekly history — manual tracking (Apr 15 – May 27)</h2>
@@ -69,7 +71,7 @@ const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 // ----------------
 
 const fmt = n => n==null ? "—" : Number(n).toLocaleString("en-US");
-const usd = n => n==null ? "—" : (n<0?"-$":"$")+Math.abs(Number(n)).toLocaleString("en-US",{maximumFractionDigits:0});
+const usd = n => n==null ? "—" : (n<0?"-€":"€")+Math.abs(Number(n)).toLocaleString("en-US",{maximumFractionDigits:0});
 const cls = n => n==null?"":n>0?"pos":n<0?"neg":"";
 const signed = n => n==null?"—":(n>=0?"+":"")+fmt(n);
 const days = (a,b) => Math.round((new Date(b)-new Date(a))/86400000);
@@ -82,6 +84,20 @@ function totalAt(rows, date){
   const byA={};
   for(const r of rows){ if(r.as_of<=date){ const c=byA[r.artist_id]; if(!c||r.as_of>c.as_of) byA[r.artist_id]=r; } }
   return Object.values(byA).reduce((a,r)=>a+Number(r.cumulative_streams),0);
+}
+
+// royalty share to us per artist (1 = 100% owned, .5 = plugged, 0 = no royalties)
+const SHARE={"4BPXWb9bm3v2vtUimqhkec":1,"13A2rC7R5jSqmrxBnoW3YI":1,"0ABEyDGsIK50UAUKRbFjCN":1,
+ "6qtKko1oPX4WuvuzQjUjtj":1,"3g9x2AJBVUzfEq4kFyBosU":1,"1OV46YCWW5pfjKX8FrYRsV":1,
+ "2NlD1yaIuvBMvyvtHaUNNB":1,"4UeHOD1zN36Pfl2QpQHBY7":1,"1iJekaH2ghjos2dN8JserR":0.5,
+ "6FMJoV7Ux0Jkogu1sNGiqe":0.5,"31i73fJWGzYMYh8ZuRY8OD":0.5,"2cjtDpSAtWZOhrHl2OsMzq":0.5,
+ "0ViH2cmDM1Ru2U5iPIlCns":0.5,"30r8wjzobOWcOGMu15uQao":0.5,"38CUya8m5fnEYiiR5pKCrL":0};
+const share=id=>(id in SHARE)?SHARE[id]:1;
+// royalty-weighted streams = Σ artist streams × their share
+function weightedAt(rows,date){
+  const byA={};
+  for(const r of rows){ if(r.as_of<=date){ const c=byA[r.artist_id]; if(!c||r.as_of>c.as_of) byA[r.artist_id]=r; } }
+  return Object.values(byA).reduce((a,r)=>a+Number(r.cumulative_streams)*share(r.artist_id),0);
 }
 
 async function main(){
@@ -149,49 +165,52 @@ async function main(){
   const spBy={}; SP.forEach(x=>(spBy[x.playlist_id] ??= []).push(x));
   const folBy={}; F.forEach(x=>(folBy[x.playlist_id] ??= []).push(x));
 
-  let tStreams=0,tNew=0,tSpend=0,tFollowers=0,latest="",anySpend=false;
+  let tStreams=0,tWeighted=0,tNew=0,tSpend=0,tFollowers=0,latest="",anySpend=false;
   const rows=P.map(pl=>{
     const sc=scBy[pl.id]||[];
     const dates=[...new Set(sc.map(x=>x.as_of))].sort();
     const last=dates[dates.length-1], prev=dates[dates.length-2];
     const total=dates.length? totalAt(sc,last):0;
+    const wtotal=dates.length? weightedAt(sc,last):0;       // royalty-weighted streams
     const prevTot=prev? totalAt(sc,prev):null;
     const nu=prevTot!=null? total-prevTot:null;
-    const perDay=(nu!=null&&prev)? nu/days(prev,last):null;
+    const owned=total? wtotal/total:null;                    // effective owned share
     if(last>latest) latest=last;
-    // spend
     const sp=spBy[pl.id]||[]; const spend=sp.length? Number(sp[sp.length-1].cumulative_spend):null;
     if(spend!=null) anySpend=true;
-    const rev=total*rate, rs=spend? rev/spend:null;
+    const rev=wtotal*rate, net=spend!=null? rev-spend:null, rs=spend? rev/spend:null;
     const fs=folBy[pl.id]||[]; const fol=fs.length? fs[fs.length-1].followers:null;
-    tStreams+=total; if(nu!=null)tNew+=nu; if(spend!=null)tSpend+=spend; if(fol!=null)tFollowers+=fol;
-    return {name:pl.name,url:pl.url,fol,total,nu,perDay,rev,spend,rs};
+    tStreams+=total; tWeighted+=wtotal; if(nu!=null)tNew+=nu; if(spend!=null)tSpend+=spend; if(fol!=null)tFollowers+=fol;
+    return {name:pl.name,url:pl.url,fol,total,nu,owned,rev,spend,net,rs};
   }).sort((a,b)=>b.total-a.total);
 
-  const tRev=tStreams*rate, tRS=tSpend? tRev/tSpend:null;
+  const tRev=tWeighted*rate, tNet=tSpend?tRev-tSpend:null, tRS=tSpend? tRev/tSpend:null, tOwned=tStreams?tWeighted/tStreams:null;
   document.getElementById("asof").textContent =
-    "Latest counts "+(latest||"—")+"  ·  $"+rate+"/stream"+(anySpend?"":"  ·  add spend to unlock revenue-vs-spend");
+    "Latest counts "+(latest||"—")+"  ·  €"+rate+"/stream  ·  revenue = royalty-weighted (your share)";
 
   const kpi=(l,v,s,sc)=>`<div class="kpi"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub ${sc||''}">${s||''}</div></div>`;
   document.getElementById("kpis").innerHTML =
     kpi("Total streams", fmt(tStreams), "tracked artists")
    +kpi("New streams", signed(tNew), "since last count", cls(tNew))
-   +kpi("Est. revenue", usd(tRev), "all-time × $"+rate)
-   +kpi("Ad spend", anySpend?usd(tSpend):"—", anySpend?"cumulative":"not entered yet")
-   +kpi("Rev / Spend", tRS==null?"—":tRS.toFixed(2)+"x", "1.00x = break-even", tRS==null?"":cls(tRS-1))
-   +kpi("Followers", fmt(tFollowers), "across playlists");
+   +kpi("Revenue (yours)", usd(tRev), "royalty-weighted")
+   +kpi("Ad spend", usd(tSpend), "cumulative")
+   +kpi("Net", usd(tNet), tNet!=null&&tNet<0?"still investing":"", cls(tNet))
+   +kpi("Rev / Spend", tRS==null?"—":tRS.toFixed(2)+"x", "1.00x = break-even", tRS==null?"":cls(tRS-1));
 
   document.querySelector("#playlists tbody").innerHTML = rows.map(r=>`<tr>
     <td><a href="${r.url}" target="_blank">${r.name}</a></td>
-    <td>${fmt(r.fol)}</td><td>${fmt(r.total)}</td>
+    <td>${fmt(r.total)}</td>
     <td class="${cls(r.nu)}">${signed(r.nu)}</td>
-    <td>${r.perDay==null?"—":fmt(Math.round(r.perDay))}</td>
+    <td>${r.owned==null?"—":(r.owned*100).toFixed(0)+"%"}</td>
     <td>${usd(r.rev)}</td><td>${usd(r.spend)}</td>
+    <td class="${cls(r.net)}">${usd(r.net)}</td>
     <td class="${r.rs==null?"":cls(r.rs-1)}">${r.rs==null?"—":r.rs.toFixed(2)+"x"}</td></tr>`).join("");
   document.querySelector("#playlists tfoot").innerHTML=`<tr>
-    <td>Total</td><td>${fmt(tFollowers)}</td><td>${fmt(tStreams)}</td>
-    <td class="${cls(tNew)}">${signed(tNew)}</td><td>—</td>
-    <td>${usd(tRev)}</td><td>${anySpend?usd(tSpend):"—"}</td>
+    <td>Total</td><td>${fmt(tStreams)}</td>
+    <td class="${cls(tNew)}">${signed(tNew)}</td>
+    <td>${tOwned==null?"—":(tOwned*100).toFixed(0)+"%"}</td>
+    <td>${usd(tRev)}</td><td>${usd(tSpend)}</td>
+    <td class="${cls(tNet)}">${usd(tNet)}</td>
     <td class="${tRS==null?"":cls(tRS-1)}">${tRS==null?"—":tRS.toFixed(2)+"x"}</td></tr>`;
 
   const asBy={}; AS.forEach(s=>(asBy[s.artist_id] ??= []).push(s));
