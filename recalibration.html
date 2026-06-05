@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WAAF — Playlist Track Map</title>
+<style>
+  :root{--bg:#0d0d0f;--card:#17171b;--line:#26262c;--txt:#f4f4f5;--mut:#9a9aa3;--grn:#1db954;--blu:#4aa8ff;--red:#ff5a5a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:26px 22px 70px}
+  h1{font-size:22px;margin:0 0 2px}
+  .sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+  h2{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;margin:24px 0 10px}
+  select{background:#0e0e11;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px;font-size:14px;max-width:280px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  th,td{padding:9px 12px;text-align:right;font-size:13.5px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3){text-align:left;white-space:normal}
+  tbody tr:last-child td{border-bottom:none}
+  .pos{color:var(--grn)} .neg{color:var(--red)} .mut{color:var(--mut)}
+  .pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600}
+  .pill.up{background:#0f2417;color:#7ee2a8}.pill.dn{background:#2a1414;color:#ffb4b4}
+  .note{color:var(--mut);font-size:12.5px;line-height:1.7;margin-top:10px}
+  .ins{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--grn);border-radius:8px;padding:12px 14px;margin:8px 0;font-size:13.5px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Playlist Track Map</h1>
+  <div class="sub">Position vs. streams — find buried hits, dead weight & skip points. Streams = last 28 days (S4A).</div>
+  <select id="plSel"></select>
+
+  <h2>Streams by position</h2>
+  <div class="card"><div id="chart"></div>
+    <div class="note"><span style="color:var(--grn)">█</span> over trend (move up) &nbsp; <span style="color:var(--blu)">█</span> on trend &nbsp; <span style="color:var(--red)">█</span> under trend &nbsp; <span style="color:#555">█</span> anchor / non-WAAF &nbsp; <span style="color:#3a3a42">▢</span> no data</div>
+  </div>
+
+  <h2>Recommendations</h2>
+  <div id="insights"></div>
+
+  <h2>Track-by-track</h2>
+  <table id="tbl"><thead><tr><th>#</th><th>Track</th><th>Artist</th><th>Streams</th><th>vs trend</th><th></th></tr></thead><tbody></tbody></table>
+  <div class="note" id="foot"></div>
+</div>
+
+<script>
+const TRACKMAP={
+"Chill Out Blues & Soul":{captured:"last 28 days · scanned 2026-06-05 (first 30 of a longer list)",tracks:[
+ {pos:1,title:"Slowburn Theory",artist:"Cloud Chief",streams:21741},
+ {pos:2,title:"Hold On",artist:"Wyatt Creed",streams:15552},
+ {pos:3,title:"Call Me The Breeze",artist:"J.J. Cale",anchor:true},
+ {pos:4,title:"Basalt",artist:"FamezBeats",streams:null},
+ {pos:5,title:"Electric",artist:"Cloud Chief",streams:12568},
+ {pos:6,title:"Ghost In The Bottle",artist:"WAAF×Wyatt",streams:12507},
+ {pos:7,title:"Bring It",artist:"FamezBeats",streams:15670},
+ {pos:8,title:"Self Raised King",artist:"Cloud Chief",streams:12355},
+ {pos:9,title:"Crying Shame",artist:"The Teskey Brothers",anchor:true},
+ {pos:10,title:"She Plays Hard",artist:"Wyatt Creed",streams:9581},
+ {pos:11,title:"Caravan",artist:"FamezBeats",streams:10813},
+ {pos:12,title:"Tampa Nights",artist:"Wyatt Creed",streams:9544},
+ {pos:13,title:"Keep on",artist:"FamezBeats",streams:9117},
+ {pos:14,title:"Gravel & Grit",artist:"Wyatt×Cloud",streams:8459},
+ {pos:15,title:"Jezebel - Acoustic",artist:"Eric Krasno",anchor:true},
+ {pos:16,title:"Marigolds",artist:"FamezBeats",streams:null},
+ {pos:17,title:"Old Hats",artist:"Wyatt Creed",streams:null},
+ {pos:18,title:"Spanish Moon",artist:"Little Feat",anchor:true},
+ {pos:19,title:"Aliento De La Marea",artist:"WAAF",streams:8289},
+ {pos:20,title:"Blues Back",artist:"FamezBeats",streams:8150},
+ {pos:21,title:"Pain And Misery",artist:"The Teskey Brothers",anchor:true},
+ {pos:22,title:"No Angel",artist:"Wyatt Creed",streams:6907},
+ {pos:23,title:"It's Alright",artist:"FamezBeats",streams:7161},
+ {pos:24,title:"Over the Bridge",artist:"FamezBeats",streams:7018},
+ {pos:25,title:"Engine Fading",artist:"Wyatt×Cloud",streams:6509},
+ {pos:26,title:"Vinyl lemon",artist:"FamezBeats",streams:null},
+ {pos:27,title:"Paper Boat",artist:"Wyatt Creed",streams:7504},
+ {pos:28,title:"Tennessee Whiskey",artist:"Chris Stapleton",anchor:true},
+ {pos:29,title:"Cowboy Casanova",artist:"Wyatt×Cloud",streams:6286},
+ {pos:30,title:"Unchained",artist:"Cloud Chief",streams:6034}
+]}};
+const fmt=n=>n==null?"—":Number(n).toLocaleString("en-US");
+
+function fit(pts){ // log-linear: streams = e^(a+b*pos)
+  const n=pts.length, xs=pts.map(p=>p.pos), ys=pts.map(p=>Math.log(p.streams));
+  const mx=xs.reduce((a,b)=>a+b,0)/n, my=ys.reduce((a,b)=>a+b,0)/n;
+  const b=xs.reduce((s,x,i)=>s+(x-mx)*(ys[i]-my),0)/xs.reduce((s,x)=>s+(x-mx)**2,0);
+  return {a:my-b*mx,b};
+}
+function render(name){
+  const data=TRACKMAP[name], T=data.tracks;
+  const withS=T.filter(t=>t.streams!=null);
+  const {a,b}=fit(withS);
+  const decay=(1-Math.exp(b))*100, half=Math.log(2)/-b;
+  T.forEach(t=>{ if(t.streams!=null){ const exp=Math.exp(a+b*t.pos); t.exp=exp; t.res=(t.streams-exp)/exp*100; } });
+  const maxS=Math.max(...withS.map(t=>t.streams));
+  // chart
+  const N=T.length, W=940,H=210,padB=18,padT=8;
+  const bw=(W)/N;
+  let svg=`<svg viewBox="0 0 ${W} ${H+padB}" width="100%">`;
+  T.forEach((t,i)=>{
+    const x=i*bw+bw*0.15, w=bw*0.7;
+    let col="#3a3a42", h=6, y=H-h;
+    if(t.anchor){ col="#555"; h=Math.max(8,(maxS*0.12/maxS)*(H-padT)); y=H-h; }
+    if(t.streams!=null){ h=Math.max(3,(t.streams/maxS)*(H-padT)); y=H-h;
+      col = t.res>18?"var(--grn)":t.res<-18?"var(--red)":"var(--blu)"; }
+    svg+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${col}"/>`;
+    if(t.pos%3===1) svg+=`<text x="${x+w/2}" y="${H+12}" fill="#9a9aa3" font-size="9" text-anchor="middle">${t.pos}</text>`;
+  });
+  svg+=`</svg>`;
+  document.getElementById("chart").innerHTML=svg;
+  // insights
+  const overs=withS.filter(t=>t.res>18&&t.pos>1).sort((x,y)=>y.res-x.res);
+  const unders=withS.filter(t=>t.res<-12).sort((x,y)=>x.res-y.res);
+  const lead=T[0];
+  let ins="";
+  ins+=`<div class="ins"><b>Lead slot is worth ~${(lead.res||0).toFixed(0)}% extra.</b> #1 "${lead.title}" (${lead.artist}) earns the front-row boost — make sure #1 is always your <b>highest-royalty, stickiest</b> track.</div>`;
+  if(overs.length) ins+=`<div class="ins"><b>Move up — buried hits:</b> ${overs.map(t=>`#${t.pos} "${t.title}" (+${t.res.toFixed(0)}%)`).join(", ")}. They beat their slot, so a higher position should lift them.</div>`;
+  if(unders.length) ins+=`<div class="ins"><b>Watch — below trend:</b> ${unders.map(t=>`#${t.pos} "${t.title}" (${t.res.toFixed(0)}%)`).join(", ")}. Mild; reposition or keep an eye on them.</div>`;
+  const nodata=T.filter(t=>!t.anchor&&t.streams==null);
+  if(nodata.length) ins+=`<div class="ins"><b>No data yet:</b> ${nodata.map(t=>`#${t.pos} "${t.title}"`).join(", ")} — pull these from the right artist's S4A to complete the map.</div>`;
+  document.getElementById("insights").innerHTML=ins;
+  // table
+  document.querySelector("#tbl tbody").innerHTML=T.map(t=>{
+    const cls=t.res==null?"":t.res>18?"pos":t.res<-18?"neg":"";
+    const pill=t.res==null?"":t.res>18?'<span class="pill up">move up</span>':t.res<-18?'<span class="pill dn">low</span>':"";
+    return `<tr><td>${t.pos}</td><td>${t.title}${t.anchor?' <span class="mut">(anchor)</span>':''}</td>
+      <td class="mut">${t.artist}</td><td>${fmt(t.streams)}</td>
+      <td class="${cls}">${t.res==null?"—":(t.res>=0?"+":"")+t.res.toFixed(0)+"%"}</td><td>${pill}</td></tr>`;
+  }).join("");
+  document.getElementById("foot").textContent=`Decay ~${decay.toFixed(1)}%/position · streams halve every ~${half.toFixed(0)} positions · ${data.captured}`;
+}
+const sel=document.getElementById("plSel");
+sel.innerHTML=Object.keys(TRACKMAP).map(k=>`<option>${k}</option>`).join("");
+sel.onchange=()=>render(sel.value);
+render(sel.value);
+</script>
+</body>
+</html>
