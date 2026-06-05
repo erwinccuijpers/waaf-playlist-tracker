@@ -78,6 +78,70 @@ const TRACKMAP={
  {pos:28,title:"Tennessee Whiskey",artist:"Chris Stapleton",anchor:true},
  {pos:29,title:"Cowboy Casanova",artist:"Wyatt×Cloud",streams:1626,collab:true},
  {pos:30,title:"Unchained",artist:"Cloud Chief",streams:1581}
+]},
+"Fitness Motivation 2026 💪":{captured:"last 7 days · VELØRA tracks only so far — pull other artists' accounts to complete · scanned 2026-06-05 (first 30)",tracks:[
+ {pos:1,title:"PressureX",artist:"Xcro22",streams:null},
+ {pos:2,title:"Build From Pain",artist:"ØMEGA",streams:null},
+ {pos:3,title:"Smash! - Chama",artist:"Erwin Garcia",streams:null},
+ {pos:4,title:"Muddy",artist:"Nostia",streams:null},
+ {pos:5,title:"Running Around",artist:"Ely Oaks",anchor:true},
+ {pos:6,title:"Your Logic Don't Apply To Me",artist:"ØMEGA",streams:null},
+ {pos:7,title:"Basement Drift",artist:"Erwin Garcia×ØMEGA",streams:null,collab:true},
+ {pos:8,title:"FAVELA MANTRA",artist:"VELØRA",streams:899},
+ {pos:9,title:"NO BATIDÃO",artist:"Nostia",streams:null},
+ {pos:10,title:"Spotlight",artist:"Erwin Garcia",streams:null},
+ {pos:11,title:"Thank You (Not So Bad)",artist:"Dimitri Vegas & Like Mike",anchor:true},
+ {pos:12,title:"Build From Pain - EG Phonk Remix",artist:"Erwin Garcia×ØMEGA",streams:null,collab:true},
+ {pos:13,title:"Claim The Fame",artist:"ØMEGA",streams:null},
+ {pos:14,title:"BRILHO AZUL",artist:"VELØRA",streams:201},
+ {pos:15,title:"Boca Bocaccio",artist:"Xcro22",streams:null},
+ {pos:16,title:"KOP (Kingdom Of Phonk)",artist:"Nostia×Belios",streams:null,collab:true},
+ {pos:17,title:"Pulse",artist:"Erwin Garcia",streams:null},
+ {pos:18,title:"Bullshit Overload, Pt. 1",artist:"ØMEGA",streams:null},
+ {pos:19,title:"The Rain - EG Phonk Remix",artist:"Erwin Garcia",streams:null},
+ {pos:20,title:"MONTAGEM TOPO",artist:"MXSTADON",streams:null},
+ {pos:21,title:"The Days - NOTION Remix",artist:"Chrystal, NOTION",anchor:true},
+ {pos:22,title:"One Dance",artist:"Leo Walt",anchor:true},
+ {pos:23,title:"Pulse - EG Pulso Phonk Remix",artist:"Erwin Garcia",streams:null},
+ {pos:24,title:"Bullshit Overload, Pt. 2",artist:"ØMEGA",streams:null},
+ {pos:25,title:"Forever Young",artist:"David Guetta, Alphaville",anchor:true},
+ {pos:26,title:"LUZ LÍQUIDA",artist:"VELØRA",streams:101},
+ {pos:27,title:"Gotta Move",artist:"Nostia",streams:null},
+ {pos:28,title:"I'll Never Forget Your Name",artist:"ØMEGA",streams:null},
+ {pos:29,title:"YEAH",artist:"Dimitri Vegas & Like Mike",anchor:true},
+ {pos:30,title:"Come Again - EG Phonk Remix",artist:"Erwin Garcia",streams:null}
+]},
+"Phonk Nation":{captured:"last 7 days · VELØRA tracks only so far — pull other artists' accounts to complete · scanned 2026-06-05 (first 30)",tracks:[
+ {pos:1,title:"PressureX",artist:"Xcro22",streams:null},
+ {pos:2,title:"Smash! - Chama",artist:"Erwin Garcia",streams:null},
+ {pos:3,title:"MONTAGE",artist:"VELØRA",streams:99},
+ {pos:4,title:"NO BATIDÃO",artist:"Nostia",streams:null},
+ {pos:5,title:"MONTAGEM XONADA",artist:"MXZI, Dj Samir",anchor:true},
+ {pos:6,title:"Boca Bocaccio",artist:"Xcro22",streams:null},
+ {pos:7,title:"Basement Drift",artist:"Erwin Garcia×ØMEGA",streams:null,collab:true},
+ {pos:8,title:"TIKI TIKI",artist:"QMIIR, SALIMA CHICA",anchor:true},
+ {pos:9,title:"NEON VIBRAÇÃO",artist:"VELØRA",streams:84},
+ {pos:10,title:"MONTAGEM DA SOMBRA",artist:"THXNOS",anchor:true},
+ {pos:11,title:"No Passinho Certo",artist:"Erwin Garcia",streams:null},
+ {pos:12,title:"No Para",artist:"Xcro22",streams:null},
+ {pos:13,title:"Muddy",artist:"Nostia",streams:null},
+ {pos:14,title:"NO ESCURO",artist:"VELØRA",streams:68},
+ {pos:15,title:"Build From Pain - EG Phonk Remix",artist:"Erwin Garcia×ØMEGA",streams:null,collab:true},
+ {pos:16,title:"PASSO BEM SOLTO",artist:"ATLXS",anchor:true},
+ {pos:17,title:"PERIGOSA DEMAIS",artist:"MXSTADON",streams:null},
+ {pos:18,title:"FAVELA MANTRA",artist:"VELØRA",streams:68},
+ {pos:19,title:"The Rain - EG Phonk Remix",artist:"Erwin Garcia",streams:null},
+ {pos:20,title:"RUN AWAY",artist:"MXSTADON",streams:null},
+ {pos:21,title:"PASSO BEM SOLTO - Slowed",artist:"ATLXS",anchor:true},
+ {pos:22,title:"Shadow On My Shoulder",artist:"Erwin Garcia",streams:null},
+ {pos:23,title:"MONTAGEM COMA",artist:"ANDROMEDA",anchor:true},
+ {pos:24,title:"Bapão",artist:"Xcro22",streams:null},
+ {pos:25,title:"Pulse - EG Pulso Phonk Remix",artist:"Erwin Garcia",streams:null},
+ {pos:26,title:"AMNÉSIA",artist:"MXSTADON",streams:null},
+ {pos:27,title:"LUZ LÍQUIDA",artist:"VELØRA",streams:47},
+ {pos:28,title:"LUNA BALA - Slowed",artist:"Yb Wasg'ood",anchor:true},
+ {pos:29,title:"MEU CORAÇÃO",artist:"MXSTADON",streams:null},
+ {pos:30,title:"Come Again - EG Phonk Remix",artist:"Erwin Garcia",streams:null}
 ]}};
 const fmt=n=>n==null?"—":Number(n).toLocaleString("en-US");
 
@@ -115,12 +179,16 @@ function render(name){
   const recents=T.filter(t=>t.recent&&t.streams!=null);
   const lead=T[0];
   let ins="";
-  ins+=`<div class="ins"><b>Lead slot is worth ~${(lead.res||0).toFixed(0)}% extra.</b> #1 "${lead.title}" (${lead.artist}) earns the front-row boost — make sure #1 is always your <b>highest-royalty, stickiest</b> track.</div>`;
+  if(lead.streams==null) ins+=`<div class="ins"><b>#1 "${lead.title}" (${lead.artist})</b> has no stream data yet — fill it to gauge the lead-slot premium (front-row tracks usually pull +30–40%).</div>`;
+  else ins+=`<div class="ins"><b>Lead slot is worth ~${(lead.res||0).toFixed(0)}% extra.</b> #1 "${lead.title}" (${lead.artist}) earns the front-row boost — keep your <b>highest-royalty, stickiest</b> track at #1.</div>`;
   if(overs.length) ins+=`<div class="ins"><b>Move up — buried hits:</b> ${overs.map(t=>`#${t.pos} "${t.title}" (+${t.res.toFixed(0)}%)`).join(", ")}. They beat their slot, so a higher position should lift them.</div>`;
   if(unders.length) ins+=`<div class="ins"><b>Watch — below trend:</b> ${unders.map(t=>`#${t.pos} "${t.title}" (${t.res.toFixed(0)}%)`).join(", ")}. Mild; reposition or keep an eye on them.</div>`;
   if(recents.length) ins+=`<div class="ins"><b>Recently added — give it time:</b> ${recents.map(t=>`"${t.title}" (#${t.pos})`).join(", ")}. Low streams here reflect short time on the list, not skipping — re-judge next week.</div>`;
   const nodata=T.filter(t=>!t.anchor&&t.streams==null);
-  if(nodata.length) ins+=`<div class="ins"><b>No data yet:</b> ${nodata.map(t=>`#${t.pos} "${t.title}"`).join(", ")} — pull these from the right artist's S4A to complete the map.</div>`;
+  if(nodata.length){
+    const need=[...new Set(nodata.flatMap(t=>t.artist.split("×")))].sort();
+    ins+=`<div class="ins"><b>To complete this map (${nodata.length} tracks missing):</b> pull per-track streams from these artist accounts — ${need.join(", ")}.</div>`;
+  }
   document.getElementById("insights").innerHTML=ins;
   // table
   document.querySelector("#tbl tbody").innerHTML=T.map(t=>{
