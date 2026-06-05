@@ -29,7 +29,7 @@
 <body>
 <div class="wrap">
   <h1>Playlist Track Map</h1>
-  <div class="sub">Position vs. streams — find buried hits, dead weight & skip points. Streams = last 28 days (S4A).</div>
+  <div class="sub">Position vs. streams — find buried hits, dead weight & skip points. Streams = last 7 days (S4A). Recalibrate every Wednesday.</div>
   <select id="plSel"></select>
 
   <h2>Streams by position</h2>
@@ -47,37 +47,37 @@
 
 <script>
 const TRACKMAP={
-"Chill Out Blues & Soul":{captured:"last 28 days · scanned 2026-06-05 (first 30 of a longer list)",tracks:[
- {pos:1,title:"Slowburn Theory",artist:"Cloud Chief",streams:21741},
- {pos:2,title:"Hold On",artist:"Wyatt Creed",streams:15552},
+"Chill Out Blues & Soul":{captured:"last 7 days · BEFORE your reorder (streams earned in these positions)",tracks:[
+ {pos:1,title:"Slowburn Theory",artist:"Cloud Chief",streams:5707},
+ {pos:2,title:"Hold On",artist:"Wyatt Creed",streams:4431},
  {pos:3,title:"Call Me The Breeze",artist:"J.J. Cale",anchor:true},
- {pos:4,title:"Basalt",artist:"FamezBeats",streams:null},
- {pos:5,title:"Electric",artist:"Cloud Chief",streams:12568},
- {pos:6,title:"Ghost In The Bottle",artist:"WAAF×Wyatt",streams:12507},
- {pos:7,title:"Bring It",artist:"FamezBeats",streams:15670},
- {pos:8,title:"Self Raised King",artist:"Cloud Chief",streams:12355},
+ {pos:4,title:"Basalt",artist:"FamezBeats",streams:1440,recent:true},
+ {pos:5,title:"Electric",artist:"Cloud Chief",streams:3569},
+ {pos:6,title:"Ghost In The Bottle",artist:"WAAF×Wyatt",streams:3324,collab:true},
+ {pos:7,title:"Bring It",artist:"FamezBeats",streams:3780},
+ {pos:8,title:"Self Raised King",artist:"Cloud Chief",streams:3241},
  {pos:9,title:"Crying Shame",artist:"The Teskey Brothers",anchor:true},
- {pos:10,title:"She Plays Hard",artist:"Wyatt Creed",streams:9581},
- {pos:11,title:"Caravan",artist:"FamezBeats",streams:10813},
- {pos:12,title:"Tampa Nights",artist:"Wyatt Creed",streams:9544},
- {pos:13,title:"Keep on",artist:"FamezBeats",streams:9117},
- {pos:14,title:"Gravel & Grit",artist:"Wyatt×Cloud",streams:8459},
+ {pos:10,title:"She Plays Hard",artist:"Wyatt Creed",streams:2744},
+ {pos:11,title:"Caravan",artist:"FamezBeats",streams:2793},
+ {pos:12,title:"Tampa Nights",artist:"Wyatt Creed",streams:2564},
+ {pos:13,title:"Keep on",artist:"FamezBeats",streams:2441},
+ {pos:14,title:"Gravel & Grit",artist:"Wyatt×Cloud",streams:2405,collab:true},
  {pos:15,title:"Jezebel - Acoustic",artist:"Eric Krasno",anchor:true},
  {pos:16,title:"Marigolds",artist:"FamezBeats",streams:null},
- {pos:17,title:"Old Hats",artist:"Wyatt Creed",streams:null},
+ {pos:17,title:"Old Hats",artist:"Wyatt Creed",streams:2213},
  {pos:18,title:"Spanish Moon",artist:"Little Feat",anchor:true},
- {pos:19,title:"Aliento De La Marea",artist:"WAAF",streams:8289},
- {pos:20,title:"Blues Back",artist:"FamezBeats",streams:8150},
+ {pos:19,title:"Aliento De La Marea",artist:"WAAF",streams:2113},
+ {pos:20,title:"Blues Back",artist:"FamezBeats",streams:2091},
  {pos:21,title:"Pain And Misery",artist:"The Teskey Brothers",anchor:true},
- {pos:22,title:"No Angel",artist:"Wyatt Creed",streams:6907},
- {pos:23,title:"It's Alright",artist:"FamezBeats",streams:7161},
- {pos:24,title:"Over the Bridge",artist:"FamezBeats",streams:7018},
- {pos:25,title:"Engine Fading",artist:"Wyatt×Cloud",streams:6509},
+ {pos:22,title:"No Angel",artist:"Wyatt Creed",streams:1920},
+ {pos:23,title:"It's Alright",artist:"FamezBeats",streams:1907},
+ {pos:24,title:"Over the Bridge",artist:"FamezBeats",streams:1864},
+ {pos:25,title:"Engine Fading",artist:"Wyatt×Cloud",streams:1809,collab:true},
  {pos:26,title:"Vinyl lemon",artist:"FamezBeats",streams:null},
- {pos:27,title:"Paper Boat",artist:"Wyatt Creed",streams:7504},
+ {pos:27,title:"Paper Boat",artist:"Wyatt Creed",streams:1756},
  {pos:28,title:"Tennessee Whiskey",artist:"Chris Stapleton",anchor:true},
- {pos:29,title:"Cowboy Casanova",artist:"Wyatt×Cloud",streams:6286},
- {pos:30,title:"Unchained",artist:"Cloud Chief",streams:6034}
+ {pos:29,title:"Cowboy Casanova",artist:"Wyatt×Cloud",streams:1626,collab:true},
+ {pos:30,title:"Unchained",artist:"Cloud Chief",streams:1581}
 ]}};
 const fmt=n=>n==null?"—":Number(n).toLocaleString("en-US");
 
@@ -111,12 +111,14 @@ function render(name){
   document.getElementById("chart").innerHTML=svg;
   // insights
   const overs=withS.filter(t=>t.res>18&&t.pos>1).sort((x,y)=>y.res-x.res);
-  const unders=withS.filter(t=>t.res<-12).sort((x,y)=>x.res-y.res);
+  const unders=withS.filter(t=>t.res<-12&&!t.recent).sort((x,y)=>x.res-y.res);
+  const recents=T.filter(t=>t.recent&&t.streams!=null);
   const lead=T[0];
   let ins="";
   ins+=`<div class="ins"><b>Lead slot is worth ~${(lead.res||0).toFixed(0)}% extra.</b> #1 "${lead.title}" (${lead.artist}) earns the front-row boost — make sure #1 is always your <b>highest-royalty, stickiest</b> track.</div>`;
   if(overs.length) ins+=`<div class="ins"><b>Move up — buried hits:</b> ${overs.map(t=>`#${t.pos} "${t.title}" (+${t.res.toFixed(0)}%)`).join(", ")}. They beat their slot, so a higher position should lift them.</div>`;
   if(unders.length) ins+=`<div class="ins"><b>Watch — below trend:</b> ${unders.map(t=>`#${t.pos} "${t.title}" (${t.res.toFixed(0)}%)`).join(", ")}. Mild; reposition or keep an eye on them.</div>`;
+  if(recents.length) ins+=`<div class="ins"><b>Recently added — give it time:</b> ${recents.map(t=>`"${t.title}" (#${t.pos})`).join(", ")}. Low streams here reflect short time on the list, not skipping — re-judge next week.</div>`;
   const nodata=T.filter(t=>!t.anchor&&t.streams==null);
   if(nodata.length) ins+=`<div class="ins"><b>No data yet:</b> ${nodata.map(t=>`#${t.pos} "${t.title}"`).join(", ")} — pull these from the right artist's S4A to complete the map.</div>`;
   document.getElementById("insights").innerHTML=ins;
@@ -124,7 +126,7 @@ function render(name){
   document.querySelector("#tbl tbody").innerHTML=T.map(t=>{
     const cls=t.res==null?"":t.res>18?"pos":t.res<-18?"neg":"";
     const pill=t.res==null?"":t.res>18?'<span class="pill up">move up</span>':t.res<-18?'<span class="pill dn">low</span>':"";
-    return `<tr><td>${t.pos}</td><td>${t.title}${t.anchor?' <span class="mut">(anchor)</span>':''}</td>
+    return `<tr><td>${t.pos}</td><td>${t.title}${t.collab?' <span class="mut">(collab)</span>':''}${t.recent?' <span style="color:#f0c040">(new)</span>':''}${t.anchor?' <span class="mut">(anchor)</span>':''}</td>
       <td class="mut">${t.artist}</td><td>${fmt(t.streams)}</td>
       <td class="${cls}">${t.res==null?"—":(t.res>=0?"+":"")+t.res.toFixed(0)+"%"}</td><td>${pill}</td></tr>`;
   }).join("");
