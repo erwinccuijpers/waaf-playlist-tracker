@@ -55,6 +55,9 @@
   <h2>Per-playlist weekly streams — green = up vs prior week</h2>
   <table id="plweekly"><thead><tr id="plweeklyHead"></tr></thead><tbody></tbody></table>
 
+  <h2>Payback trajectory — cumulative net (€) by week</h2>
+  <div id="payback" class="card" style="padding:14px"></div>
+
   <h2>Artists — ranked by monthly listeners</h2>
   <table id="artists"><thead><tr>
     <th class="rank">#</th><th>Artist</th><th>Monthly listeners</th><th>Followers</th><th>List. growth</th><th>Foll. growth</th>
@@ -165,7 +168,7 @@ async function main(){
   const spBy={}; SP.forEach(x=>(spBy[x.playlist_id] ??= []).push(x));
   const folBy={}; F.forEach(x=>(folBy[x.playlist_id] ??= []).push(x));
 
-  let tStreams=0,tWeighted=0,tNew=0,tSpend=0,tFollowers=0,latest="",anySpend=false;
+  let tStreams=0,tWeighted=0,tNew=0,tSpend=0,tFollowers=0,latest="",anySpend=false; const ownedBy={};
   const rows=P.map(pl=>{
     const sc=scBy[pl.id]||[];
     const dates=[...new Set(sc.map(x=>x.as_of))].sort();
@@ -175,6 +178,7 @@ async function main(){
     const prevTot=prev? totalAt(sc,prev):null;
     const nu=prevTot!=null? total-prevTot:null;
     const owned=total? wtotal/total:null;                    // effective owned share
+    ownedBy[pl.id]=owned??1;
     if(last>latest) latest=last;
     const sp=spBy[pl.id]||[]; const spend=sp.length? Number(sp[sp.length-1].cumulative_spend):null;
     if(spend!=null) anySpend=true;
@@ -212,6 +216,37 @@ async function main(){
     <td>${usd(tRev)}</td><td>${usd(tSpend)}</td>
     <td class="${cls(tNet)}">${usd(tNet)}</td>
     <td class="${tRS==null?"":cls(tRS-1)}">${tRS==null?"—":tRS.toFixed(2)+"x"}</td></tr>`;
+
+  // payback trajectory — cumulative net (€) per playlist over the weekly history
+  (function(){
+    const box=document.getElementById("payback"); if(!box) return;
+    const weeks=[...new Set((WM||[]).map(x=>x.week_of))].sort();
+    if(weeks.length<2){ box.innerHTML='<div class="note">Not enough weekly history yet.</div>'; return; }
+    const plName=id=>(P.find(p=>p.id===id)||{}).name||id;
+    const byPl={}; (WM||[]).forEach(x=>{(byPl[x.playlist_id] ??= {})[x.week_of]={s:x.streams||0,c:Number(x.ad_spend||0)};});
+    const series=Object.keys(byPl).map(pid=>{
+      const own=ownedBy[pid]??1; let cum=0;
+      const pts=weeks.map(w=>{ const d=byPl[pid][w]; if(d) cum+=d.s*rate*own-d.c; return cum; });
+      return {name:plName(pid),pts,final:pts[pts.length-1]};
+    }).sort((a,b)=>b.final-a.final);
+    const ys=series.flatMap(s=>s.pts).concat([0]);
+    const minY=Math.min(...ys), maxY=Math.max(...ys,0);
+    const W=720,H=270,PADL=54,PADR=14,PADT=12,PADB=30;
+    const X=i=>PADL+(W-PADL-PADR)*(i/(weeks.length-1));
+    const Y=v=>PADT+(H-PADT-PADB)*(1-(v-minY)/((maxY-minY)||1));
+    const COL=["#1db954","#4aa8ff","#ff5a5a","#f0c040","#b06cff","#ff8c42","#46d3c0"];
+    let s=`<svg viewBox="0 0 ${W} ${H}" width="100%">`;
+    s+=`<line x1="${PADL}" y1="${Y(0)}" x2="${W-PADR}" y2="${Y(0)}" stroke="#777" stroke-dasharray="4 4"/>`;
+    s+=`<text x="${PADL-8}" y="${Y(0)-4}" fill="#9a9aa3" font-size="10" text-anchor="start">€0 break-even</text>`;
+    weeks.forEach((w,i)=>{ s+=`<text x="${X(i)}" y="${H-PADB+16}" fill="#9a9aa3" font-size="9" text-anchor="middle">${w.slice(5)}</text>`; });
+    series.forEach((ser,k)=>{ const c=COL[k%COL.length];
+      s+=`<polyline points="${ser.pts.map((v,i)=>X(i)+','+Y(v)).join(' ')}" fill="none" stroke="${c}" stroke-width="2"/>`;
+      s+=`<circle cx="${X(weeks.length-1)}" cy="${Y(ser.pts[ser.pts.length-1])}" r="3" fill="${c}"/>`;
+    });
+    s+=`</svg>`;
+    const leg=series.map((ser,k)=>`<span style="color:${COL[k%COL.length]}">●</span> ${ser.name} (${usd(ser.final)})`).join("&nbsp;&nbsp; ");
+    box.innerHTML=s+`<div class="note" style="margin-top:8px">${leg}</div>`;
+  })();
 
   const asBy={}; AS.forEach(s=>(asBy[s.artist_id] ??= []).push(s));
   const arts=A.map(a=>{const arr=asBy[a.id]||[],last=arr[arr.length-1]||{},first=arr[0]||{};
