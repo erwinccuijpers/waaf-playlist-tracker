@@ -58,7 +58,7 @@
       <button class="ghost" id="logoutBtn">Sign out</button>
     </div>
 
-    <h2><span>① Streams — last 7 days per artist</span></h2>
+    <h2><span>① Streams — new since last count, per artist</span></h2>
     <div class="card">
       <div class="datebar"><label>Count date (the Wednesday)</label><input id="sDate" type="date" /></div>
       <div id="streamRows"></div>
@@ -73,6 +73,14 @@
       <div id="spendRows"></div>
       <div style="margin-top:14px"><button id="saveSpend">Save spend</button></div>
       <div class="msg" id="spendMsg"></div>
+    </div>
+
+    <h2><span>③ Followers — current total per playlist</span></h2>
+    <div class="card">
+      <div class="datebar"><label>Count date</label><input id="fDate" type="date" /></div>
+      <div id="folRows"></div>
+      <div style="margin-top:14px"><button id="saveFollowers">Save followers</button></div>
+      <div class="msg" id="folMsg"></div>
     </div>
 
     <div class="sub" style="margin-top:22px">→ <a id="dashLink" href="#" target="_blank">View the dashboard</a></div>
@@ -90,7 +98,7 @@ const today=()=>new Date().toISOString().slice(0,10);
 const num=v=>{const n=parseFloat(String(v).replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
 function flash(el,ok,t){el.className="msg "+(ok?"ok":"bad");el.textContent=t;el.style.display="block";}
 
-let PL=[], ART=[], SC=[], SP=[];
+let PL=[], ART=[], SC=[], SP=[], FOL=[];
 // latest cumulative strictly before a date, for a pair
 function prevCum(pid,aid,date){
   let best=null;
@@ -107,6 +115,10 @@ function latestSpend(pid){
   const rows=SP.filter(r=>r.playlist_id===pid).sort((a,b)=>a.as_of<b.as_of?-1:1);
   return rows.length?Number(rows[rows.length-1].cumulative_spend):0;
 }
+function latestFollowers(pid){
+  const rows=FOL.filter(r=>r.playlist_id===pid).sort((a,b)=>a.captured_on<b.captured_on?-1:1);
+  return rows.length?Number(rows[rows.length-1].followers):0;
+}
 const plName=id=>(PL.find(p=>p.id===id)||{}).name||id;
 const artName=id=>(ART.find(a=>a.id===id)||{}).name||id;
 
@@ -120,11 +132,11 @@ function streamRow(pid,aid){
       <div class="hint">${hint!=null?"last week: "+hint.toLocaleString():"first count"}</div>
       <input type="hidden" class="pid" value="${pid}"><input type="hidden" class="aid" value="${aid}"></div>
       <div></div>
-      <input class="v" type="number" min="0" placeholder="last 7 days">`;
+      <input class="v" type="number" min="0" placeholder="since last count">`;
   } else {
     d.innerHTML=`<select class="aid">${optionsHTML(ART)}</select>
       <select class="pid">${optionsHTML(PL)}</select>
-      <input class="v" type="number" min="0" placeholder="last 7 days">`;
+      <input class="v" type="number" min="0" placeholder="since last count">`;
   }
   return d;
 }
@@ -143,25 +155,26 @@ function buildSpendRows(){
   PL.forEach(p=>{
     const prev=latestSpend(p.id);
     const d=document.createElement("div"); d.className="srow"; d.dataset.pid=p.id;
-    d.innerHTML=`<div><div class="nm">${p.name}</div><div class="hint">recorded so far: $${prev.toLocaleString()}</div></div>
-      <input class="v" type="number" min="0" placeholder="new total $" value="">
+    d.innerHTML=`<div><div class="nm">${p.name}</div><div class="hint">recorded so far: €${prev.toLocaleString()}</div></div>
+      <input class="v" type="number" min="0" placeholder="new total €" value="">
       <div class="calc" data-prev="${prev}">—</div>`;
     const inp=d.querySelector(".v"), calc=d.querySelector(".calc");
-    inp.addEventListener("input",()=>{const v=num(inp.value); calc.textContent=v==null?"—":"+ $"+Math.max(v-prev,0).toLocaleString()+" since last";});
+    inp.addEventListener("input",()=>{const v=num(inp.value); calc.textContent=v==null?"—":"+ €"+Math.max(v-prev,0).toLocaleString()+" since last";});
     box.appendChild(d);
   });
 }
 
 async function loadData(){
-  const [pl,ar,sc,sp]=await Promise.all([
+  const [pl,ar,sc,sp,fo]=await Promise.all([
     sb.from("playlists").select("id,name"),
     sb.from("artists").select("id,name"),
     sb.from("stream_counts").select("*"),
     sb.from("spend_counts").select("*"),
+    sb.from("follower_snapshots").select("*"),
   ]);
-  PL=pl.data||[]; ART=ar.data||[]; SC=sc.data||[]; SP=sp.data||[];
-  $("sDate").value=today(); $("pDate").value=today();
-  buildStreamRows(); buildSpendRows();
+  PL=pl.data||[]; ART=ar.data||[]; SC=sc.data||[]; SP=sp.data||[]; FOL=fo.data||[];
+  $("sDate").value=today(); $("pDate").value=today(); $("fDate").value=today();
+  buildStreamRows(); buildSpendRows(); buildFolRows();
 }
 
 async function saveStreams(){
@@ -197,6 +210,36 @@ async function saveSpend(){
   await loadData();
 }
 
+function buildFolRows(){
+  const box=$("folRows"); box.innerHTML="";
+  PL.forEach(p=>{
+    const prev=latestFollowers(p.id);
+    const d=document.createElement("div"); d.className="srow"; d.dataset.pid=p.id;
+    d.innerHTML=`<div><div class="nm">${p.name}</div><div class="hint">last: ${prev.toLocaleString()}</div></div>
+      <input class="v" type="number" min="0" placeholder="current followers" value="">
+      <div class="calc" data-prev="${prev}">—</div>`;
+    const inp=d.querySelector(".v"), calc=d.querySelector(".calc");
+    inp.addEventListener("input",()=>{const v=num(inp.value); calc.textContent=v==null?"—":(v-prev>=0?"+":"")+(v-prev).toLocaleString()+" new";});
+    box.appendChild(d);
+  });
+}
+
+async function saveFollowers(){
+  const date=$("fDate").value; const m=$("folMsg");
+  if(!date){flash(m,false,"Pick a date.");return;}
+  const rows=[...document.querySelectorAll("#folRows .srow")].map(d=>{
+    const v=num(d.querySelector(".v").value); return {pid:d.dataset.pid,v};
+  }).filter(r=>r.v!=null&&r.v>=0);
+  if(!rows.length){flash(m,false,"Enter at least one follower count.");return;}
+  const payload=rows.map(r=>({playlist_id:r.pid,captured_on:date,followers:Math.round(r.v)}));
+  $("saveFollowers").disabled=true;
+  const {error}=await sb.from("follower_snapshots").upsert(payload,{onConflict:"playlist_id,captured_on"});
+  $("saveFollowers").disabled=false;
+  if(error){flash(m,false,"Error: "+error.message);return;}
+  flash(m,true,`Saved followers for ${payload.length} playlist(s).`);
+  await loadData();
+}
+
 async function showApp(session){
   $("login").style.display="none"; $("app").style.display="block";
   $("who").textContent="Signed in as "+session.user.email;
@@ -209,6 +252,7 @@ async function init(){
   $("addRow").onclick=()=>$("streamRows").appendChild(streamRow());
   $("saveStreams").onclick=saveStreams;
   $("saveSpend").onclick=saveSpend;
+  $("saveFollowers").onclick=saveFollowers;
   $("logoutBtn").onclick=async()=>{await sb.auth.signOut(); showLogin();};
   $("loginBtn").onclick=async()=>{
     const {data,error}=await sb.auth.signInWithPassword({email:$("email").value.trim(),password:$("pw").value});
