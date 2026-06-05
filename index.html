@@ -33,6 +33,7 @@
   .mut{color:var(--mut)}
   #payback input,#payback select{background:#0e0e11;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:4px 6px;font-size:12px;width:80px}
   #payback table td,#payback table th{padding:7px 10px}
+  #repArtist{background:#0e0e11;border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px 8px;font-size:13px;max-width:240px}
   .err{background:#2a1414;border:1px solid #5a2a2a;color:#ffb4b4;padding:14px;border-radius:10px;margin-top:16px;font-size:13px}
 </style>
 </head>
@@ -61,6 +62,14 @@
   <h2>Payback trajectory — cumulative net (€) by week</h2>
   <div id="payback" class="card" style="padding:14px"></div>
 
+  <h2>Repeat listening — plays per listener (baseline · last 7 days)</h2>
+  <table id="repeat"><thead><tr><th>Playlist</th><th>Plays / listener</th><th>Read</th></tr></thead><tbody></tbody></table>
+  <div class="card" style="padding:14px;margin-top:10px">
+    <label class="mut" style="font-size:12px;display:block;margin-bottom:6px">Per-artist breakdown — who do listeners skip?</label>
+    <select id="repArtist"></select>
+    <table id="repArtistTbl" style="margin-top:10px"><thead><tr><th>Playlist</th><th>Streams</th><th>Listeners</th><th>Plays / listener</th></tr></thead><tbody></tbody></table>
+  </div>
+
   <h2>Artists — ranked by monthly listeners</h2>
   <table id="artists"><thead><tr>
     <th class="rank">#</th><th>Artist</th><th>Monthly listeners</th><th>Followers</th><th>List. growth</th><th>Foll. growth</th>
@@ -75,6 +84,9 @@
 const SUPABASE_URL  = "https://bxeqafbvzkpoccqjxuqi.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ4ZXFhZmJ2emtwb2NjcWp4dXFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0OTQ0ODcsImV4cCI6MjA5NjA3MDQ4N30.5VT50kYJXiRhdLilugQMAachwV7HDLLK7LdrMhkzUKs";
 // ----------------
+
+// baseline plays/listener per (playlist, artist), last 7 days to 2026-06-03 (from S4A exports)
+const LIS_BASE=[{"pl":"Chill Out Blues & Soul","art":"Wyatt Creed","s":43933,"l":4168},{"pl":"Car Frequencies","art":"Wyatt Creed","s":5062,"l":651},{"pl":"Chill Vibes 2026 🌙","art":"Wyatt Creed","s":2630,"l":286},{"pl":"Fitness Motivation 2026 💪","art":"ØMEGA","s":1337,"l":342},{"pl":"Phonk Nation","art":"ØMEGA","s":115,"l":57},{"pl":"Chill Out Blues & Soul","art":"Cloud Chief","s":30782,"l":4708},{"pl":"Chill Vibes 2026 🌙","art":"Cloud Chief","s":4779,"l":450},{"pl":"Car Frequencies","art":"Cloud Chief","s":2130,"l":507},{"pl":"Summer Vibes ⛱️","art":"Cloud Chief","s":1135,"l":274},{"pl":"Chill Out Blues & Soul","art":"We're All F*cked","s":5375,"l":2566},{"pl":"Car Frequencies","art":"We're All F*cked","s":4190,"l":646},{"pl":"Summer Vibes ⛱️","art":"We're All F*cked","s":1507,"l":303},{"pl":"Chill Vibes 2026 🌙","art":"We're All F*cked","s":633,"l":221},{"pl":"Indie Folk Chill","art":"We're All F*cked","s":72,"l":19},{"pl":"Summer Vibes ⛱️","art":"R.O.O.T.S.","s":324,"l":212},{"pl":"Car Frequencies","art":"R.O.O.T.S.","s":48,"l":42},{"pl":"Indie Folk Chill","art":"R.O.O.T.S.","s":27,"l":11},{"pl":"Fitness Motivation 2026 💪","art":"Erwin Garcia","s":1941,"l":350},{"pl":"Phonk Nation","art":"Erwin Garcia","s":861,"l":102},{"pl":"Summer Vibes ⛱️","art":"Erwin Garcia","s":172,"l":116},{"pl":"Chill Out Blues & Soul","art":"FamezBeats","s":22276,"l":3740},{"pl":"Chill Vibes 2026 🌙","art":"FamezBeats","s":3449,"l":391},{"pl":"Car Frequencies","art":"FamezBeats","s":373,"l":163}];
 
 const fmt = n => n==null ? "—" : Number(n).toLocaleString("en-US");
 const usd = n => n==null ? "—" : (n<0?"-€":"€")+Math.abs(Number(n)).toLocaleString("en-US",{maximumFractionDigits:0});
@@ -296,6 +308,33 @@ async function main(){
    +"Streams cover your tracked artists only — true totals are higher.";
 }
 main();
+
+// repeat-listening section (static baseline; trend fills in from weekly listener entries)
+(function(){
+  if(typeof LIS_BASE==="undefined"||!LIS_BASE.length) return;
+  const byp={}; LIS_BASE.forEach(x=>{(byp[x.pl] ??= []).push(x);});
+  const plRows=Object.keys(byp).map(pl=>{
+    const xs=byp[pl], tot=xs.reduce((a,x)=>a+x.s,0);
+    const wr=tot? xs.reduce((a,x)=>a+x.s*(x.s/x.l),0)/tot : 0;
+    return {pl,wr};
+  }).sort((a,b)=>b.wr-a.wr);
+  const read=r=> r>=7?"strong repeat":r>=5?"healthy":r>=4?"ok":"shallow / skippy";
+  const rt=document.querySelector("#repeat tbody");
+  if(rt) rt.innerHTML=plRows.map(r=>`<tr><td>${r.pl}</td><td>${r.wr.toFixed(2)}</td><td class="mut">${read(r.wr)}</td></tr>`).join("");
+  const sel=document.getElementById("repArtist");
+  if(sel){
+    const arts=[...new Set(LIS_BASE.map(x=>x.art))].sort();
+    sel.innerHTML=arts.map(a=>`<option>${a}</option>`).join("");
+    const renderArt=()=>{
+      const xs=LIS_BASE.filter(x=>x.art===sel.value).sort((p,q)=>q.s-p.s);
+      document.querySelector("#repArtistTbl tbody").innerHTML=xs.map(x=>{
+        const r=x.s/x.l;
+        return `<tr><td>${x.pl}</td><td>${fmt(x.s)}</td><td>${fmt(x.l)}</td><td class="${r>=5?'pos':r<3?'neg':''}">${r.toFixed(1)}</td></tr>`;
+      }).join("");
+    };
+    sel.onchange=renderArt; renderArt();
+  }
+})();
 </script>
 </body>
 </html>
