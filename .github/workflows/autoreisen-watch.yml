@@ -48,8 +48,12 @@ jobs:
       - name: Check prices
         if: steps.gate.outputs.run == 'true'
         env:
-          # One bot token; per-user chat ids live in autoreisen/config.yaml.
+          # One bot token serves every user; watches live in Supabase (cw_watches),
+          # created by the Telegram bot. The service role key bypasses RLS so the
+          # checker can read active watches and write prices back.
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python autoreisen/watch.py
 
       - name: Commit price history

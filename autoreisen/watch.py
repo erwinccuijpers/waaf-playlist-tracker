@@ -1,23 +1,35 @@
 #!/usr/bin/env python3
 """Canary Islands car-rental price watcher (multi-user, multi-supplier).
 
-For every booking in config.yaml it queries each enabled supplier
-(autoreisen, topcar), finds the cheapest car in your chosen class, compares the
-cheapest across suppliers with what you paid, logs it to history.csv and sends a
-Telegram alert to that user when it is at least `min_savings_eur` cheaper.
+Watches live in Supabase (public.cw_watches) — created by the Telegram bot, so
+nobody edits a config file. For every active watch this queries each enabled
+supplier (autoreisen, topcar), finds the cheapest car in that class, compares
+the cheapest across suppliers with what the user paid, logs it to history.csv,
+and sends a Telegram alert to that user's chat when it is at least
+`min_savings_eur` cheaper than the last price we alerted them about. It writes
+the latest price back to the watch and deactivates a watch the day before pickup.
 
-One Telegram bot serves many users: put each person's own chat id under
-`users:` in config.yaml. Env var TELEGRAM_BOT_TOKEN holds the bot token; without
-it (or without a user's chat id) messages are only logged, not sent.
+config.yaml still holds the cross-supplier mapping tables (offices, classes,
+suppliers, min_savings_eur); the watches themselves come from the database.
+
+Env:
+  TELEGRAM_BOT_TOKEN           bot token (without it, alerts are only logged)
+  SUPABASE_URL                 project URL, e.g. https://xxxx.supabase.co
+  SUPABASE_SERVICE_ROLE_KEY    service role key (bypasses RLS)
+
+Local testing without the database: set CARWATCH_LOCAL_WATCHES to a JSON file
+holding a list of watch rows; the DB read/writeback is then skipped and alerts
+are only logged.
 """
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -38,6 +50,7 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 TIMEOUT = 60
+EPS = 0.005  # float compare tolerance for euros
 
 log = logging.getLogger("carwatch")
 
@@ -108,7 +121,10 @@ def strip_group_prefix(text: str) -> str:
 
 
 def parse_dt(value) -> datetime:
-    return datetime.strptime(str(value), "%Y-%m-%d %H:%M")
+    """Accept 'YYYY-MM-DD HH:MM' (and tolerate seconds / 'T' separator)."""
+    s = str(value).strip().replace("T", " ")
+    s = re.sub(r"(\d{2}:\d{2}):\d{2}.*$", r"\1", s)  # drop seconds / tz if present
+    return datetime.strptime(s, "%Y-%m-%d %H:%M")
 
 
 # --------------------------------------------------------------------------- #
@@ -304,15 +320,62 @@ def car_matches(car: dict, spec: dict) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Supabase watch store (REST)
+# --------------------------------------------------------------------------- #
+SB_URL = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
+SB_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
+LOCAL_WATCHES = os.environ.get("CARWATCH_LOCAL_WATCHES") or ""
+
+
+def sb_enabled() -> bool:
+    return bool(SB_URL and SB_KEY)
+
+
+def _sb_headers(extra: dict | None = None) -> dict:
+    h = {"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}"}
+    if extra:
+        h.update(extra)
+    return h
+
+
+def fetch_watches() -> list[dict]:
+    """Active watches, from Supabase or (for local testing) a JSON file."""
+    if sb_enabled():
+        r = requests.get(
+            f"{SB_URL}/rest/v1/cw_watches",
+            headers=_sb_headers({"Accept": "application/json"}),
+            params={"select": "*", "active": "eq.true", "order": "created_at.asc"},
+            timeout=TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json()
+    if LOCAL_WATCHES:
+        data = json.loads(Path(LOCAL_WATCHES).read_text())
+        return [w for w in data if w.get("active", True)]
+    raise SystemExit(
+        "No watch source: set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY "
+        "(production) or CARWATCH_LOCAL_WATCHES=<file.json> (local testing)."
+    )
+
+
+def update_watch(watch_id: str, fields: dict) -> None:
+    if not sb_enabled():
+        log.info("  (local mode) would update watch %s -> %s", watch_id, fields)
+        return
+    r = requests.patch(
+        f"{SB_URL}/rest/v1/cw_watches",
+        headers=_sb_headers({"Content-Type": "application/json", "Prefer": "return=minimal"}),
+        params={"id": f"eq.{watch_id}"},
+        data=json.dumps(fields),
+        timeout=TIMEOUT,
+    )
+    if not r.ok:
+        log.error("  watch %s update failed: %s %s", watch_id, r.status_code, r.text[:200])
+
+
+# --------------------------------------------------------------------------- #
 # History / Telegram
 # --------------------------------------------------------------------------- #
-def read_history() -> list[dict]:
-    if not HISTORY_PATH.exists():
-        return []
-    with HISTORY_PATH.open(newline="") as f:
-        return list(csv.DictReader(f))
-
-
 def append_history(row: dict) -> None:
     new = not HISTORY_PATH.exists()
     with HISTORY_PATH.open("a", newline="") as f:
@@ -320,16 +383,6 @@ def append_history(row: dict) -> None:
         if new:
             w.writeheader()
         w.writerow(row)
-
-
-def already_alerted(history: list[dict], user: str, name: str, price: float, paid: float) -> bool:
-    """True if the last alert for this user+booking (at this paid price) was for the same price."""
-    alerts = [
-        r for r in history
-        if r.get("user") == user and r["booking"] == name and r.get("alerted") == "yes"
-        and abs(float(r["paid_eur"]) - paid) < 0.005
-    ]
-    return bool(alerts) and abs(float(alerts[-1]["price_eur"]) - price) < 0.005
 
 
 def send_telegram(chat_id: str, text: str) -> None:
@@ -349,25 +402,29 @@ def send_telegram(chat_id: str, text: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Core: check one booking for one user
+# Core: check one watch
 # --------------------------------------------------------------------------- #
-def check_booking(user: dict, booking: dict, cfg: dict, history: list[dict]) -> bool:
-    uname = user["name"]
-    chat = str(user.get("telegram_chat_id") or "")
-    name = booking["name"]
-    paid = float(booking["paid_eur"])
-    min_savings = float(booking.get("min_savings_eur", cfg.get("min_savings_eur", 3)))
-    pickup, ret = parse_dt(booking["pickup"]), parse_dt(booking["return"])
+def check_watch(watch: dict, cfg: dict) -> None:
+    wid = str(watch.get("id") or "")
+    chat = str(watch.get("chat_id") or "")
+    uname = watch.get("user_name") or "there"
+    paid = float(watch["paid_eur"])
+    label_name = f'{watch.get("office")} {str(watch.get("pickup"))[:10]}'
+    min_savings = float(cfg.get("min_savings_eur", 25))
+    last_alert = watch.get("last_alert_price")
+    last_alert = float(last_alert) if last_alert not in (None, "") else None
+    pickup, ret = parse_dt(watch["pickup"]), parse_dt(watch["dropoff"])
 
-    offices = (cfg.get("offices") or {}).get(booking["office"])
-    car_class = (cfg.get("classes") or {}).get(booking["car_class"])
+    offices = (cfg.get("offices") or {}).get(watch["office"])
+    car_class = (cfg.get("classes") or {}).get(watch["car_class"])
     if not offices or not car_class:
-        log.error("[%s/%s] unknown office %r or class %r — check config", uname, name,
-                  booking.get("office"), booking.get("car_class"))
-        return False
-    label = car_class.get("label", booking["car_class"])
-    log.info("[%s/%s] %s, %s→%s, paid €%.2f", uname, name, label,
-             pickup.date(), ret.date(), paid)
+        log.error("[%s] unknown office %r or class %r — check config.yaml",
+                  label_name, watch.get("office"), watch.get("car_class"))
+        return
+    label = car_class.get("label", watch["car_class"])
+    log.info("[%s] %s, %s→%s, paid €%.2f (last alert %s)",
+             uname, label, pickup.date(), ret.date(), paid,
+             f"€{last_alert:.2f}" if last_alert is not None else "none")
 
     enabled = {s: v for s, v in (cfg.get("suppliers") or {}).items() if (v or {}).get("enabled", True)}
     results, problems = [], []
@@ -395,46 +452,56 @@ def check_booking(user: dict, booking: dict, cfg: dict, history: list[dict]) -> 
                  sup["label"], best["price"], best["model"], best["group"])
 
     if not results:
-        msg = f"⚠️ {name}: couldn't read a price for {label} at any supplier."
-        if problems:
-            msg += "\n" + "\n".join(problems)
-        send_telegram(chat, msg)
-        return False
+        log.warning("[%s] no price read at any supplier", label_name)
+        if problems and chat:
+            send_telegram(chat, f"⚠️ {label}: couldn't read a price right now.\n" + "\n".join(problems))
+        update_watch(wid, {"last_checked_at": _utcnow_iso()})
+        return
 
     overall = min(results, key=lambda c: c["price"])
     savings = paid - overall["price"]
-    log.info("[%s/%s] cheapest overall: €%.2f at %s vs paid €%.2f → savings €%.2f",
-             uname, name, overall["price"], overall["label"], paid, savings)
+    log.info("[%s] cheapest overall: €%.2f at %s vs paid €%.2f → savings €%.2f",
+             label_name, overall["price"], overall["label"], paid, savings)
 
-    alerted_name = ""
-    if savings >= min_savings and not already_alerted(history, uname, name, overall["price"], paid):
+    # Alert only when we clear the threshold AND it is a new low vs the last alert.
+    alerted = False
+    if savings >= min_savings - EPS and (last_alert is None or overall["price"] < last_alert - EPS):
         others = "\n".join(
             f"• {r['label']}: €{r['price']:.2f} ({r['model']})"
             for r in sorted(results, key=lambda c: c["price"])
         )
         send_telegram(chat,
-            f"🚗 Cheaper car rental: {name}\n"
+            f"🚗 Cheaper car rental found!\n"
+            f"{label} — {pickup.date()} → {ret.date()}\n\n"
             f"Cheapest now: {overall['model']} at {overall['label']}\n"
-            f"Paid:  €{paid:.2f}\n"
-            f"Now:   €{overall['price']:.2f}\n"
-            f"Save:  €{savings:.2f}\n\n"
+            f"You paid: €{paid:.2f}\n"
+            f"Now:      €{overall['price']:.2f}\n"
+            f"Save:     €{savings:.2f}\n\n"
             f"All suppliers:\n{others}\n\n"
             f"Rebook ({overall['label']}): {overall['url']}"
         )
-        alerted_name = overall["supplier"]
+        alerted = True
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    # Log every supplier's cheapest-in-class for the price history / disputes.
+    now = _utcnow_iso()
     for r in results:
-        append_history_row = {
-            "checked_at": now, "user": uname, "booking": name, "supplier": r["supplier"],
+        row = {
+            "checked_at": now, "user": uname, "booking": label_name, "supplier": r["supplier"],
             "group": r["group"], "model": r["model"], "price_eur": f"{r['price']:.2f}",
             "paid_eur": f"{paid:.2f}",
             "cheapest": "yes" if r is overall else "no",
-            "alerted": "yes" if r["supplier"] == alerted_name else "no",
+            "alerted": "yes" if (alerted and r is overall) else "no",
         }
-        append_history(append_history_row)
-        history.append(append_history_row)
-    return True
+        append_history(row)
+
+    writeback = {"last_checked_at": now, "last_price_eur": round(overall["price"], 2)}
+    if alerted:
+        writeback["last_alert_price"] = round(overall["price"], 2)
+    update_watch(wid, writeback)
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
 # --------------------------------------------------------------------------- #
@@ -443,22 +510,30 @@ def check_booking(user: dict, booking: dict, cfg: dict, history: list[dict]) -> 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = yaml.safe_load(CONFIG_PATH.read_text()) or {}
-    users = cfg.get("users") or []
-    if not users:
-        log.error("No users in %s", CONFIG_PATH)
-        return 1
-    history = read_history()
-    ok = True
+
+    watches = fetch_watches()
+    log.info("Loaded %d active watch(es) from %s",
+             len(watches), "Supabase" if sb_enabled() else "local file")
+    if not watches:
+        return 0
+
     now = datetime.now()
-    for user in users:
-        for b in user.get("bookings") or []:
-            if b.get("enabled", True) is False:
-                continue
-            if parse_dt(b["pickup"]) < now:
-                log.info("[%s/%s] pickup date has passed — skipping", user["name"], b["name"])
-                continue
-            ok = check_booking(user, b, cfg, history) and ok
-    return 0 if ok else 1
+    for w in watches:
+        try:
+            pickup = parse_dt(w["pickup"])
+        except (KeyError, ValueError) as e:
+            log.error("watch %s: bad pickup %r (%s) — skipping", w.get("id"), w.get("pickup"), e)
+            continue
+        # Stop a watch the day before pickup (nothing left to save once you've collected the car).
+        if pickup <= now + timedelta(days=1):
+            log.info("watch %s: pickup %s is within a day — deactivating", w.get("id"), pickup.date())
+            update_watch(str(w.get("id") or ""), {"active": False})
+            continue
+        try:
+            check_watch(w, cfg)
+        except Exception as e:  # one bad watch must not stop the rest
+            log.exception("watch %s failed: %s", w.get("id"), e)
+    return 0
 
 
 if __name__ == "__main__":

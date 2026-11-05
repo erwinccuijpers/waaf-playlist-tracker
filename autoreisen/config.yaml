@@ -1,6 +1,6 @@
 # Canary Islands car-rental price watcher — configuration.
 # Alert when the cheapest car (across suppliers) is at least this much below paid.
-min_savings_eur: 3
+min_savings_eur: 25
 
 # Which suppliers to query. Turn one off with: enabled: false
 suppliers:
@@ -35,21 +35,7 @@ classes:
     autoreisen: { groups: [D], models: [Ibiza, Golf, Polo] }
     topcar:     { groups: [B1A, BA], models: [Polo, Citroen] }
 
-# One Telegram bot, many users. Each person starts the bot once, then you paste
-# their chat id here (see README). A user can watch several bookings, or none.
-users:
-  - name: "Erwin"
-    telegram_chat_id: "998931850"
-    bookings:
-      - name: "Tenerife Xmas 2026"
-        office: tenerife_south
-        pickup: "2026-12-20 10:00"   # YYYY-MM-DD HH:MM
-        return: "2027-01-21 10:00"
-        car_class: economy_manual
-        paid_eur: 665.00
-        # min_savings_eur: 5         # optional per-booking override
-        # enabled: false             # optional: pause this booking
-
-  - name: "Girlfriend"
-    telegram_chat_id: ""          # <-- her chat id
-    bookings: []                    # add bookings like above
+# NOTE: watches are no longer listed here. People create them through the
+# Telegram bot, which stores them in Supabase (public.cw_watches); the checker
+# reads active watches from there. This file only holds the mapping tables
+# above. For local testing without the database, see "Run locally" in README.md.
