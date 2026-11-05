@@ -1,0 +1,64 @@
+name: Autoreisen price watch
+
+on:
+  schedule:
+    # 08:00 Canary time. The Canaries are UTC+0 in winter and UTC+1 in summer,
+    # so both runs are scheduled and the "Check Canary time" step keeps the right one.
+    - cron: "0 7 * * *"   # 08:00 WEST (summer)
+    - cron: "0 8 * * *"   # 08:00 WET  (winter)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: autoreisen-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Canary time
+        id: gate
+        run: |
+          offset=$(TZ=Atlantic/Canary date +%z)   # +0000 winter, +0100 summer
+          run=true
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ "${{ github.event.schedule }}" = "0 7 * * *" ] && [ "$offset" != "+0100" ]; then run=false; fi
+            if [ "${{ github.event.schedule }}" = "0 8 * * *" ] && [ "$offset" != "+0000" ]; then run=false; fi
+          fi
+          echo "Canary offset $offset, run=$run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: autoreisen/requirements.txt
+
+      - name: Install dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: pip install -r autoreisen/requirements.txt
+
+      - name: Check prices
+        if: steps.gate.outputs.run == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python autoreisen/watch.py
+
+      - name: Commit price history
+        if: always() && steps.gate.outputs.run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898733+github-actions[bot]@users.noreply.github.com"
+          git add autoreisen/history.csv 2>/dev/null || true
+          if git diff --cached --quiet; then echo "No history changes"; exit 0; fi
+          git commit -m "Autoreisen: price check $(date -u +%F)"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push

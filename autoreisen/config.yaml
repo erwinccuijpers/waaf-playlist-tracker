@@ -1,0 +1,36 @@
+# Autoreisen price watcher configuration.
+# Alert when the current price is at least this much below what you paid.
+min_savings_eur: 3
+
+site:
+  # Search-form parameter names for pickup / return TIME.
+  # NOT YET VERIFIED: autoreisen.com could not be reached while this was built.
+  # Open the search form on autoreisen.com, run a search with a non-default
+  # time, and copy the time parameter names from the resulting URL (or the
+  # <select name="..."> in the form). Leave empty to omit time from the URL.
+  pickup_time_param: ""
+  return_time_param: ""
+  time_format: "%H:%M"     # e.g. "%H:%M" -> 10:00, "%H" -> 10
+  extra_params:
+    fin: 1
+
+  # Optional CSS selectors if the automatic parser ever mis-reads the page.
+  # Leave empty to auto-detect car blocks ("Group X" text + € price).
+  # selectors:
+  #   car: "div.car-item"
+  #   group: ".group"
+  #   model: "h3"
+  #   price: ".total-price"
+
+# Office codes: 2 = Tenerife South (TFS). See README for others.
+bookings:
+  - name: "Tenerife Jan 2027"
+    pickup_office: 2
+    return_office: 2
+    pickup: "2027-01-10 10:00"     # YYYY-MM-DD HH:MM
+    return: "2027-01-17 10:00"
+    group: "A"                     # car group letter; may be left empty if model is set
+    model: ""                      # optional, substring match, e.g. "Panda"
+    paid_eur: 150.00               # <-- what you paid; update after rebooking
+    # min_savings_eur: 5           # optional per-booking override
+    # enabled: false               # optional: pause this booking
