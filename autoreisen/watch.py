@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Autoreisen (Tenerife) car-rental price watcher.
+"""Canary Islands car-rental price watcher (multi-user, multi-supplier).
 
-Fetches the public rates page for each booking in config.yaml, finds the
-price for your car group/model, logs it to history.csv and sends a Telegram
-alert when it is at least `min_savings_eur` cheaper than what you paid.
+For every booking in config.yaml it queries each enabled supplier
+(autoreisen, topcar), finds the cheapest car in your chosen class, compares the
+cheapest across suppliers with what you paid, logs it to history.csv and sends a
+Telegram alert to that user when it is at least `min_savings_eur` cheaper.
 
-Env vars: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (optional; without them
-messages are only logged).
+One Telegram bot serves many users: put each person's own chat id under
+`users:` in config.yaml. Env var TELEGRAM_BOT_TOKEN holds the bot token; without
+it (or without a user's chat id) messages are only logged, not sent.
 """
 from __future__ import annotations
 
@@ -26,16 +28,27 @@ from bs4 import BeautifulSoup
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "config.yaml"
 HISTORY_PATH = HERE / "history.csv"
-HISTORY_FIELDS = ["checked_at", "booking", "group", "model", "price_eur", "paid_eur", "alerted"]
+HISTORY_FIELDS = [
+    "checked_at", "user", "booking", "supplier",
+    "group", "model", "price_eur", "paid_eur", "cheapest", "alerted",
+]
 
-BASE_URL = "https://www.autoreisen.com/car-hire/rates-fleet.php"
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+TIMEOUT = 60
 
-log = logging.getLogger("autoreisen")
+log = logging.getLogger("carwatch")
 
+
+class ParseError(Exception):
+    """A supplier page did not look like we expected (layout probably changed)."""
+
+
+# --------------------------------------------------------------------------- #
+# Shared price / text helpers
+# --------------------------------------------------------------------------- #
 # "1.234,56 €", "€ 123.45", "123,45€", "123 EUR"
 PRICE_RE = re.compile(
     r"(?:€|EUR)\s*(\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{1,2})?)"
@@ -43,36 +56,18 @@ PRICE_RE = re.compile(
     re.IGNORECASE,
 )
 # "Group A", "Grupo B1", "Gruppe C", "Category D", "Cat. E"
-GROUP_RE = re.compile(r"\b(?:group|grupo|gruppe|groep|category|categor[ií]a|cat\.)\s*:?\s*([A-Z]\d?)\b", re.IGNORECASE)
+GROUP_RE = re.compile(
+    r"\b(?:group|grupo|gruppe|groep|category|categor[ií]a|cat\.)\s*:?\s*([A-Z]\d?)\b",
+    re.IGNORECASE,
+)
 # Leading group code, as autoreisen.com writes it: "A- Citröen C3", "C - Seat Ibiza".
-# A single capital (optionally a digit) followed by a dash and then the model text.
 LEADING_GROUP_RE = re.compile(r"^\s*([A-Z]\d?)\s*[-–—]\s*(?=\S)")
-# Same prefix, for stripping it off the model name (keeps the dash out of the result).
 GROUP_PREFIX_RE = re.compile(r"^\s*[A-Z]\d?\s*[-–—]\s*")
 
 
-def group_in(text: str) -> str:
-    """Car group letter from either 'Group A' wording or a leading 'A- …' code."""
-    m = GROUP_RE.search(text) or LEADING_GROUP_RE.match(text)
-    return m.group(1).upper() if m else ""
-
-
-def strip_group_prefix(text: str) -> str:
-    """'A- Citröen C3 5P' -> 'Citröen C3 5P' (leaves text without a prefix alone)."""
-    return GROUP_PREFIX_RE.sub("", text).strip() or text
-
-
-class ParseError(Exception):
-    """The page did not look like we expected (layout probably changed)."""
-
-
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
 def to_float(raw: str) -> float:
-    s = raw.replace(" ", "").replace(" ", "")
+    s = raw.replace(" ", "").replace(" ", "")
     if "," in s and "." in s:
-        # whichever separator comes last is the decimal one
         if s.rfind(",") > s.rfind("."):
             s = s.replace(".", "").replace(",", ".")
         else:
@@ -101,29 +96,51 @@ def clean(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def build_url(booking: dict, site: dict) -> str:
-    pu = datetime.strptime(str(booking["pickup"]), "%Y-%m-%d %H:%M")
-    re_ = datetime.strptime(str(booking["return"]), "%Y-%m-%d %H:%M")
+def group_in(text: str) -> str:
+    """Car group letter from either 'Group A' wording or a leading 'A- …' code."""
+    m = GROUP_RE.search(text) or LEADING_GROUP_RE.match(text)
+    return m.group(1).upper() if m else ""
+
+
+def strip_group_prefix(text: str) -> str:
+    """'A- Citröen C3 5P' -> 'Citröen C3 5P' (leaves text without a prefix alone)."""
+    return GROUP_PREFIX_RE.sub("", text).strip() or text
+
+
+def parse_dt(value) -> datetime:
+    return datetime.strptime(str(value), "%Y-%m-%d %H:%M")
+
+
+# --------------------------------------------------------------------------- #
+# autoreisen.com adapter (GET + HTML)
+# --------------------------------------------------------------------------- #
+AUTOREISEN_URL = "https://www.autoreisen.com/car-hire/rates-fleet.php"
+AUTOREISEN_SELECTORS = {
+    "car": "article.car-feature",
+    "group": "strong.title",
+    "model": "strong.title",
+    "price": ".price-block a.price",
+}
+
+
+def autoreisen_url(office, pickup: datetime, ret: datetime) -> str:
     params = {
-        "ofi_rec": booking.get("pickup_office", 2),
-        "ofi_dev": booking.get("return_office", booking.get("pickup_office", 2)),
-        "dia_inicio": pu.day,
-        "mes_inicio": f"{pu.month}-{pu.year}",
-        "dia_final": re_.day,
-        "mes_final": f"{re_.month}-{re_.year}",
+        "ofi_rec": office, "ofi_dev": office,
+        "dia_inicio": pickup.day, "mes_inicio": f"{pickup.month:02d}-{pickup.year}",
+        "dia_final": ret.day, "mes_final": f"{ret.month:02d}-{ret.year}",
+        "hora_inicio": pickup.strftime("%H:%M"), "hora_final": ret.strftime("%H:%M"),
+        "fin": 1,
     }
-    fmt = site.get("time_format", "%H:%M")
-    if site.get("pickup_time_param"):
-        params[site["pickup_time_param"]] = pu.strftime(fmt)
-    if site.get("return_time_param"):
-        params[site["return_time_param"]] = re_.strftime(fmt)
-    params.update(site.get("extra_params") or {"fin": 1})
-    return f"{BASE_URL}?{urlencode(params)}"
+    return f"{AUTOREISEN_URL}?{urlencode(params)}"
 
 
-# --------------------------------------------------------------------------- #
-# Parsing
-# --------------------------------------------------------------------------- #
+def fetch_autoreisen(office, pickup: datetime, ret: datetime) -> tuple[list[dict], str]:
+    url = autoreisen_url(office, pickup, ret)
+    resp = requests.get(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en"}, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return parse_cars(resp.text, AUTOREISEN_SELECTORS), url
+
+
 def parse_cars(html: str, selectors: dict | None = None) -> list[dict]:
     """Return [{'group': 'A', 'model': 'Fiat Panda', 'price': 123.45}, ...]."""
     soup = BeautifulSoup(html, "html.parser")
@@ -131,33 +148,24 @@ def parse_cars(html: str, selectors: dict | None = None) -> list[dict]:
         tag.decompose()
 
     selectors = selectors or {}
-    if selectors.get("car"):
-        blocks = soup.select(selectors["car"])
-    else:
-        blocks = _guess_car_blocks(soup)
+    blocks = soup.select(selectors["car"]) if selectors.get("car") else _guess_car_blocks(soup)
 
-    cars = []
-    for block in blocks:
-        car = _parse_block(block, selectors)
-        if car:
-            cars.append(car)
+    cars = [c for c in (_parse_block(b, selectors) for b in blocks) if c]
     if not cars:
         raise ParseError(
             f"Found {len(blocks)} candidate car blocks but could not read group+price from any "
-            "(site layout may have changed; see 'selectors' in config.yaml)."
+            "(autoreisen layout may have changed)."
         )
     return cars
 
 
 def _guess_car_blocks(soup: BeautifulSoup) -> list:
-    """Smallest elements whose text names a car group and carries a EUR price."""
     candidates = []
     for el in soup.find_all(["div", "article", "li", "tr", "section", "form", "table"]):
         text = el.get_text(" ", strip=True)
         if group_in(text) and prices_in(text):
             candidates.append(el)
     ids = {id(c) for c in candidates}
-    # keep only the innermost: drop a candidate if one of its descendants is also a candidate
     return [c for c in candidates if not any(id(d) in ids for d in c.find_all(True))]
 
 
@@ -190,8 +198,6 @@ def _parse_block(block, selectors: dict) -> dict | None:
 
 
 def _guess_total_price(block) -> float | None:
-    # Prefer a price close to the word "total"; otherwise the largest amount in
-    # the block (a per-day price is always lower than the total).
     for el in block.find_all(string=re.compile(r"total", re.IGNORECASE)):
         node = el.parent
         for _ in range(3):
@@ -212,14 +218,89 @@ def _guess_model(block) -> str:
     return clean(img["alt"]) if img else ""
 
 
-def find_match(cars: list[dict], booking: dict) -> dict | None:
-    group = str(booking.get("group") or "").strip().upper()
-    model = str(booking.get("model") or "").strip().lower()
-    matches = [
-        c for c in cars
-        if (not group or c["group"] == group) and (not model or model in c["model"].lower())
-    ]
-    return min(matches, key=lambda c: c["price"]) if matches else None
+# --------------------------------------------------------------------------- #
+# top-car-hire.com adapter (session POST + JSON)
+# --------------------------------------------------------------------------- #
+TOPCAR_BASE = "https://top-car-hire.com"
+TOPCAR_HOME = f"{TOPCAR_BASE}/en/"
+
+
+def fetch_topcar(office, pickup: datetime, ret: datetime) -> tuple[list[dict], str]:
+    """TopCar renders prices from a JSON endpoint after a stateful search POST."""
+    office = str(office)
+    s = requests.Session()
+    s.headers.update({"User-Agent": USER_AGENT, "Accept-Language": "en"})
+
+    home = s.get(TOPCAR_HOME, timeout=TIMEOUT)
+    home.raise_for_status()
+    m = re.search(r'name="_token"\s+value="([^"]+)"', home.text)
+    if not m:
+        raise ParseError("TopCar: could not find the search form CSRF token.")
+    token = m.group(1)
+
+    step1 = s.post(
+        f"{TOPCAR_BASE}/en/booking/1",
+        data={
+            "_token": token,
+            "pick_up_office": office, "give_back_office": office,
+            "pick_up_date": pickup.strftime("%d/%m/%Y"),
+            "give_back_date": ret.strftime("%d/%m/%Y"),
+            "pick_up_hour": pickup.strftime("%H:%M"),
+            "give_back_hour": ret.strftime("%H:%M"),
+            "edad": "40",  # 30+ driver (no young-driver surcharge)
+        },
+        timeout=TIMEOUT,
+    )
+    step1.raise_for_status()
+    meta = re.search(r'name="csrf-token"\s+content="([^"]+)"', step1.text)
+    csrf = meta.group(1) if meta else token
+
+    veh = s.post(
+        f"{TOPCAR_BASE}/reservar/obtenerVehiculos",
+        data={"categoria": "1", "lang": "en"},  # categoria 1 = "All" vehicles
+        headers={"X-CSRF-TOKEN": csrf, "X-Requested-With": "XMLHttpRequest"},
+        timeout=TIMEOUT,
+    )
+    veh.raise_for_status()
+    try:
+        items = veh.json().get("items") or []
+    except ValueError as e:
+        raise ParseError(f"TopCar: vehicles response was not JSON ({e}).")
+
+    cars = []
+    for it in items:
+        try:
+            price = float(str(it["price"]).replace(",", "."))
+        except (KeyError, ValueError):
+            continue
+        cars.append({
+            "group": str(it.get("item_category", "")).upper(),
+            "model": clean(it.get("item_name", "")),
+            "price": price,
+        })
+    if not cars:
+        raise ParseError("TopCar: search returned no vehicles (sold out, or flow changed).")
+    return cars, step1.url or TOPCAR_HOME
+
+
+# --------------------------------------------------------------------------- #
+# Supplier registry
+# --------------------------------------------------------------------------- #
+SUPPLIERS = {
+    "autoreisen": {"label": "Autoreisen", "fetch": fetch_autoreisen},
+    "topcar": {"label": "TopCar", "fetch": fetch_topcar},
+}
+
+
+def car_matches(car: dict, spec: dict) -> bool:
+    """Does this car count as the wanted class for this supplier?"""
+    groups = [str(g).upper() for g in (spec.get("groups") or [])]
+    models = [str(m).lower() for m in (spec.get("models") or [])]
+    if groups and car["group"] not in groups:
+        return False
+    if models and not any(m in car["model"].lower() for m in models):
+        return False
+    return bool(groups or models)
 
 
 # --------------------------------------------------------------------------- #
@@ -241,115 +322,142 @@ def append_history(row: dict) -> None:
         w.writerow(row)
 
 
-def already_alerted(history: list[dict], name: str, price: float, paid: float) -> bool:
-    """True if the last alert for this booking (at this paid price) was for the same price."""
+def already_alerted(history: list[dict], user: str, name: str, price: float, paid: float) -> bool:
+    """True if the last alert for this user+booking (at this paid price) was for the same price."""
     alerts = [
         r for r in history
-        if r["booking"] == name and r.get("alerted") == "yes"
+        if r.get("user") == user and r["booking"] == name and r.get("alerted") == "yes"
         and abs(float(r["paid_eur"]) - paid) < 0.005
     ]
     return bool(alerts) and abs(float(alerts[-1]["price_eur"]) - price) < 0.005
 
 
-def send_telegram(text: str) -> None:
-    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not chat:
-        log.warning("Telegram not configured; message would have been:\n%s", text)
+def send_telegram(chat_id: str, text: str) -> None:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token or not chat_id:
+        log.warning("Telegram not sent (no token or chat id). Message was:\n%s", text)
         return
     r = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat, "text": text, "disable_web_page_preview": True},
+        json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
         timeout=30,
     )
     if not r.ok:
-        log.error("Telegram send failed: %s %s", r.status_code, r.text[:300])
+        log.error("Telegram send failed for chat %s: %s %s", chat_id, r.status_code, r.text[:300])
     else:
-        log.info("Telegram message sent")
+        log.info("Telegram message sent to chat %s", chat_id)
+
+
+# --------------------------------------------------------------------------- #
+# Core: check one booking for one user
+# --------------------------------------------------------------------------- #
+def check_booking(user: dict, booking: dict, cfg: dict, history: list[dict]) -> bool:
+    uname = user["name"]
+    chat = str(user.get("telegram_chat_id") or "")
+    name = booking["name"]
+    paid = float(booking["paid_eur"])
+    min_savings = float(booking.get("min_savings_eur", cfg.get("min_savings_eur", 3)))
+    pickup, ret = parse_dt(booking["pickup"]), parse_dt(booking["return"])
+
+    offices = (cfg.get("offices") or {}).get(booking["office"])
+    car_class = (cfg.get("classes") or {}).get(booking["car_class"])
+    if not offices or not car_class:
+        log.error("[%s/%s] unknown office %r or class %r — check config", uname, name,
+                  booking.get("office"), booking.get("car_class"))
+        return False
+    label = car_class.get("label", booking["car_class"])
+    log.info("[%s/%s] %s, %s→%s, paid €%.2f", uname, name, label,
+             pickup.date(), ret.date(), paid)
+
+    enabled = {s: v for s, v in (cfg.get("suppliers") or {}).items() if (v or {}).get("enabled", True)}
+    results, problems = [], []
+    for sup_name in enabled:
+        sup = SUPPLIERS.get(sup_name)
+        office_code = offices.get(sup_name)
+        if not sup or office_code is None:
+            continue  # this supplier not available for this office; silently skip
+        try:
+            cars, url = sup["fetch"](office_code, pickup, ret)
+        except (requests.RequestException, ParseError) as e:
+            log.error("  %s FAILED: %s", sup_name, e)
+            problems.append(f"{sup['label']}: {e}")
+            continue
+        spec = car_class.get(sup_name) or {}
+        matches = [c for c in cars if car_matches(c, spec)]
+        if not matches:
+            groups = ", ".join(sorted({c["group"] for c in cars}))
+            log.warning("  %s: no car in class (groups seen: %s)", sup_name, groups)
+            continue
+        best = min(matches, key=lambda c: c["price"])
+        best["supplier"], best["label"], best["url"] = sup_name, sup["label"], url
+        results.append(best)
+        log.info("  %-10s cheapest in class: €%8.2f  %s (%s)",
+                 sup["label"], best["price"], best["model"], best["group"])
+
+    if not results:
+        msg = f"⚠️ {name}: couldn't read a price for {label} at any supplier."
+        if problems:
+            msg += "\n" + "\n".join(problems)
+        send_telegram(chat, msg)
+        return False
+
+    overall = min(results, key=lambda c: c["price"])
+    savings = paid - overall["price"]
+    log.info("[%s/%s] cheapest overall: €%.2f at %s vs paid €%.2f → savings €%.2f",
+             uname, name, overall["price"], overall["label"], paid, savings)
+
+    alerted_name = ""
+    if savings >= min_savings and not already_alerted(history, uname, name, overall["price"], paid):
+        others = "\n".join(
+            f"• {r['label']}: €{r['price']:.2f} ({r['model']})"
+            for r in sorted(results, key=lambda c: c["price"])
+        )
+        send_telegram(chat,
+            f"🚗 Cheaper car rental: {name}\n"
+            f"Cheapest now: {overall['model']} at {overall['label']}\n"
+            f"Paid:  €{paid:.2f}\n"
+            f"Now:   €{overall['price']:.2f}\n"
+            f"Save:  €{savings:.2f}\n\n"
+            f"All suppliers:\n{others}\n\n"
+            f"Rebook ({overall['label']}): {overall['url']}"
+        )
+        alerted_name = overall["supplier"]
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    for r in results:
+        append_history_row = {
+            "checked_at": now, "user": uname, "booking": name, "supplier": r["supplier"],
+            "group": r["group"], "model": r["model"], "price_eur": f"{r['price']:.2f}",
+            "paid_eur": f"{paid:.2f}",
+            "cheapest": "yes" if r is overall else "no",
+            "alerted": "yes" if r["supplier"] == alerted_name else "no",
+        }
+        append_history(append_history_row)
+        history.append(append_history_row)
+    return True
 
 
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
-def check_booking(booking: dict, cfg: dict, history: list[dict]) -> bool:
-    """Returns True on success, False if something needs attention."""
-    site = cfg.get("site") or {}
-    name = booking["name"]
-    paid = float(booking["paid_eur"])
-    min_savings = float(booking.get("min_savings_eur", cfg.get("min_savings_eur", 3)))
-    url = build_url(booking, site)
-    want = " / ".join(x for x in [booking.get("group") and f"group {booking['group']}", booking.get("model")] if x)
-    log.info("[%s] %s, paid €%.2f — %s", name, want, paid, url)
-
-    try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en"}, timeout=60)
-        resp.raise_for_status()
-        cars = parse_cars(resp.text, site.get("selectors"))
-    except (requests.RequestException, ParseError) as e:
-        log.error("[%s] FAILED: %s", name, e)
-        send_telegram(f"⚠️ Autoreisen watcher: could not read prices for '{name}'.\n{e}\n\n{url}")
-        return False
-
-    for c in sorted(cars, key=lambda c: (c["group"], c["price"])):
-        log.info("    group %-3s €%8.2f  %s", c["group"], c["price"], c["model"])
-
-    match = find_match(cars, booking)
-    if not match:
-        groups = ", ".join(sorted({c["group"] for c in cars}))
-        log.error("[%s] no car matches %s (groups on page: %s)", name, want, groups)
-        send_telegram(
-            f"⚠️ Autoreisen watcher: '{name}' — no car matching {want} on the page "
-            f"({len(cars)} cars parsed, groups: {groups}). Sold out, or layout changed?\n\n{url}"
-        )
-        return False
-
-    price, savings = match["price"], paid - match["price"]
-    log.info("[%s] current €%.2f (%s) vs paid €%.2f → savings €%.2f", name, price, match["model"], paid, savings)
-
-    alerted = "no"
-    if savings >= min_savings:
-        if already_alerted(history, name, price, paid):
-            log.info("[%s] cheaper, but already alerted at €%.2f — not repeating", name, price)
-        else:
-            send_telegram(
-                f"🚗 Cheaper car rental: {name}\n"
-                f"{match['model']} (group {match['group']})\n"
-                f"Paid:  €{paid:.2f}\n"
-                f"Now:   €{price:.2f}\n"
-                f"Save:  €{savings:.2f}\n\n"
-                f"Rebook: {url}"
-            )
-            alerted = "yes"
-
-    row = {
-        "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        "booking": name,
-        "group": match["group"],
-        "model": match["model"],
-        "price_eur": f"{price:.2f}",
-        "paid_eur": f"{paid:.2f}",
-        "alerted": alerted,
-    }
-    append_history(row)
-    history.append(row)
-    return True
-
-
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = yaml.safe_load(CONFIG_PATH.read_text()) or {}
-    bookings = cfg.get("bookings") or []
-    if not bookings:
-        log.error("No bookings in %s", CONFIG_PATH)
+    users = cfg.get("users") or []
+    if not users:
+        log.error("No users in %s", CONFIG_PATH)
         return 1
     history = read_history()
     ok = True
-    for b in bookings:
-        if b.get("enabled", True) is False:
-            continue
-        if datetime.strptime(str(b["pickup"]), "%Y-%m-%d %H:%M") < datetime.now():
-            log.info("[%s] pickup date has passed — skipping", b["name"])
-            continue
-        ok = check_booking(b, cfg, history) and ok
+    now = datetime.now()
+    for user in users:
+        for b in user.get("bookings") or []:
+            if b.get("enabled", True) is False:
+                continue
+            if parse_dt(b["pickup"]) < now:
+                log.info("[%s/%s] pickup date has passed — skipping", user["name"], b["name"])
+                continue
+            ok = check_booking(user, b, cfg, history) and ok
     return 0 if ok else 1
 
 

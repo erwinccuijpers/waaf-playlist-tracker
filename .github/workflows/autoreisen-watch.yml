@@ -48,8 +48,8 @@ jobs:
       - name: Check prices
         if: steps.gate.outputs.run == 'true'
         env:
+          # One bot token; per-user chat ids live in autoreisen/config.yaml.
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python autoreisen/watch.py
 
       - name: Commit price history

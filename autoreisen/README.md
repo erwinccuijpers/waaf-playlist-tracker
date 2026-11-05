@@ -1,72 +1,120 @@
-# Autoreisen price watcher (Tenerife)
+# Canary Islands car-rental price watcher
 
-Checks autoreisen.com's public rates page once a day, compares the price of your
-car group/model with what you paid, and sends a Telegram message if it got at
-least €3 cheaper (setting: `min_savings_eur`). Every check is written to `history.csv`.
+Checks each supplier's public rates once a day, finds the cheapest car in the
+class you chose, compares the cheapest **across suppliers** with what you paid,
+and sends a Telegram alert if it got at least €3 cheaper (`min_savings_eur`).
+Every check is written to `history.csv`.
 
-Files: `watch.py` (the script), `config.yaml` (your bookings), `history.csv`
-(price history, created automatically), `../.github/workflows/autoreisen-watch.yml`
-(the daily run, 08:00 Canary time).
+Suppliers today: **autoreisen.com** (GET + HTML) and **top-car-hire.com / TopCar**
+(session POST + JSON). More can be added as adapters in `watch.py`.
+
+One Telegram bot serves **many users** — share it with friends, each watches
+their own bookings and gets their own alerts.
+
+Files: `watch.py` (script), `config.yaml` (suppliers, offices, class mapping,
+users + bookings), `history.csv` (auto-created), `../.github/workflows/autoreisen-watch.yml`
+(daily run, 08:00 Canary time).
 
 ## One-time setup
-1. Create a bot with [@BotFather](https://t.me/BotFather), send it any message,
-   then get your chat id from `https://api.telegram.org/bot<TOKEN>/getUpdates`.
-2. In the GitHub repo: Settings → Secrets and variables → Actions → add
-   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
-3. Scheduled workflows only run from the **default branch** (`main`), so merge this there.
-   Use Actions → "Autoreisen price watch" → *Run workflow* to test it right away.
 
-The pickup/return time parameters are already filled in (`hora_inicio` / `hora_final`,
-verified against the site's search form), and the parser is tuned to the live page
-layout, so no further setup is needed before the first run.
+### 1. Make the Telegram bot
+1. In Telegram, message [@BotFather](https://t.me/BotFather) → `/newbot`, pick a
+   name; it gives you a **bot token**.
+2. In GitHub: Settings → Secrets and variables → Actions → add `TELEGRAM_BOT_TOKEN`
+   (the token). You do **not** add chat ids as secrets — they go in `config.yaml`.
 
-## Add a booking
-Add an entry under `bookings:` in `config.yaml`:
+### 2. Each user's chat id
+Every person who wants alerts does this once:
+1. Open your bot in Telegram and press **Start** (send it any message).
+2. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser — find
+   `"chat":{"id":123456789,...}`. That number is their `telegram_chat_id`.
+3. Paste it under that person in `config.yaml` (see below).
+
+A user with an empty `telegram_chat_id` is still checked and logged, but their
+alerts are only printed in the workflow log, not sent.
+
+### 3. Merge & run
+Scheduled workflows only run from the **default branch** (`main`), so merge there.
+Then Actions → "Autoreisen price watch" → *Run workflow* to test immediately.
+
+## config.yaml
 
 ```yaml
-  - name: "Tenerife Easter 2027"     # unique; used in history.csv and alerts
-    pickup_office: 2                 # 2 = Tenerife South (TFS)
-    return_office: 2
-    pickup: "2027-03-26 09:00"       # YYYY-MM-DD HH:MM
-    return: "2027-04-02 09:00"
-    group: "B"                       # car group letter, and/or…
-    model: ""                        # …a model substring, e.g. "Ibiza"
-    paid_eur: 189.50
+min_savings_eur: 3
+
+suppliers:
+  autoreisen: { enabled: true }
+  topcar: { enabled: true }
+
+offices:                 # canonical office -> each supplier's own code
+  tenerife_south:
+    autoreisen: 2
+    topcar: "50"
+
+classes:                 # your cross-supplier mapping table
+  economy_manual:
+    label: "Economy manual (Seat Ibiza / VW Polo class)"
+    autoreisen: { groups: [C], models: [Ibiza, Polo] }
+    topcar:     { groups: [B, B1], models: [Polo, Rio, Ibiza] }
+
+users:
+  - name: "Erwin"
+    telegram_chat_id: "123456789"
+    bookings:
+      - name: "Tenerife Xmas 2026"
+        office: tenerife_south
+        pickup: "2026-12-20 10:00"
+        return: "2027-01-21 10:00"
+        car_class: economy_manual
+        paid_eur: 665.00
 ```
 
-Commit and push. Bookings whose pickup date has passed are skipped automatically
-(you can also set `enabled: false`).
+### Add a user
+Add an entry under `users:` with their `name`, `telegram_chat_id`, and a
+`bookings:` list (can be empty to start).
+
+### Add a booking
+Under a user's `bookings:`, add `name`, `office` (a key from `offices`), `pickup`
+/ `return` (`YYYY-MM-DD HH:MM`), `car_class` (a key from `classes`), and `paid_eur`.
+Past-pickup bookings are skipped automatically; `enabled: false` pauses one.
+
+### The class mapping (important)
+Each supplier uses its **own** group letters, so `classes` is where you say what
+counts as "the same car". A car matches a class when its group is in `groups`
+**and** (if given) its model contains one of `models`. Example: for
+`economy_manual`, autoreisen group `C` (Seat Ibiza / VW Polo) maps to TopCar
+groups `B`/`B1` (Kia Rio / VW Polo). Tune these as you learn each fleet.
 
 ### Office codes
-`pickup_office` → `ofi_rec`, `return_office` → `ofi_dev`. Verified Nov 2026:
+`autoreisen` uses numeric `ofi_rec` codes; `topcar` uses its `pick_up_office`
+select value. Verified Nov 2026:
 
-| Code | Office |
-|------|--------|
-| 2    | Tenerife South Airport (TFS, Reina Sofía) |
-| 1    | Tenerife North Airport (TFN, Los Rodeos) |
-| 18   | Gran Canaria Airport |
-| 3    | Lanzarote Airport |
-| 19   | Fuerteventura Airport |
+| Office | autoreisen | topcar |
+|---|---|---|
+| Tenerife South (TFS) | 2 | 50 |
+| Tenerife North (TFN) | 1 | 51 |
+| Gran Canaria Airport | 18 | 1 |
+| Lanzarote Airport | 3 | 60 |
+| Fuerteventura Airport | 19 | 10 |
 
-For `return_office` you can also use `9999` ("same office"). The grey island
-headings in the site's dropdown (102, 118, 103, 119) are labels, not real offices.
-To find any other office, pick it on the site and read the `ofi_rec` number from the URL.
+To add any other office: pick it on the supplier's site and read the code from
+the form (autoreisen: the `ofi_rec` number in the URL; topcar: the option value
+in the pick-up-office `<select>`).
 
 ## After you rebook
-Set `paid_eur` for that booking to the new price you paid and commit. Alerts
-are compared with the new price, and the "don't repeat the same price" memory is reset
-because it is tied to the paid price.
+Set `paid_eur` for that booking to the new price and commit. The "don't repeat
+the same price" memory is tied to the paid price, so it resets automatically.
 
 ## How alerts work
-- **Cheaper:** sent once per new lower price. If the price goes back up and then drops again
-  to a *different* price, you get a new alert.
-- **⚠️ Warning:** sent if the page can't be fetched, no cars can be parsed (layout
-  changed), or no car matches your group/model (sold out or wrong config). The
-  workflow run then shows as failed too.
-- If the automatic parser misreads the page, set CSS `selectors` in `config.yaml`.
+- **Cheaper:** one alert per new lower price, naming the cheapest supplier and
+  listing all suppliers' prices for that class.
+- **⚠️ Warning:** if no supplier can be read / has the class for a booking.
+- Each supplier's cheapest-in-class price is logged to `history.csv` every run
+  (with a `cheapest` flag for the overall winner), giving you a price history and
+  a cross-supplier comparison over time.
 
 ## Run locally
 ```bash
 pip install -r requirements.txt
-TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... python watch.py   # Telegram vars optional
+TELEGRAM_BOT_TOKEN=... python watch.py   # token optional; without it, alerts are logged
 ```

@@ -1,38 +1,55 @@
-# Autoreisen price watcher configuration.
-# Alert when the current price is at least this much below what you paid.
+# Canary Islands car-rental price watcher — configuration.
+# Alert when the cheapest car (across suppliers) is at least this much below paid.
 min_savings_eur: 3
 
-site:
-  # Search-form parameter names for pickup / return TIME.
-  # Verified against the car-hire search form on autoreisen.com (Nov 2026):
-  # <select name="hora_inicio"> and <select name="hora_final">, values like "10:00".
-  pickup_time_param: "hora_inicio"
-  return_time_param: "hora_final"
-  time_format: "%H:%M"     # the site's time options are whole hours, e.g. 10:00
-  extra_params:
-    fin: 1
+# Which suppliers to query. Turn one off with: enabled: false
+suppliers:
+  autoreisen: { enabled: true }
+  topcar: { enabled: true }
 
-  # CSS selectors for the real autoreisen.com rates page (verified Nov 2026).
-  # Each car is an <article class="car-feature"> with the group+model in
-  # <strong class="title"> ("A- Citröen C3 5P") and the EUR total inside
-  # the <a class="price"> in the price block. Remove this block to fall back
-  # to auto-detection.
-  selectors:
-    car: "article.car-feature"
-    group: "strong.title"
-    model: "strong.title"
-    price: ".price-block a.price"
+# Canonical office -> each supplier's own office code.
+# A booking just names one of these keys; add more offices as needed.
+# (To find a supplier's code: pick the office on its site and read it from the
+#  form/URL. autoreisen: numeric ofi_rec. topcar: pick_up_office select value.)
+offices:
+  tenerife_south:
+    label: "Tenerife South Airport (TFS, Reina Sofía)"
+    autoreisen: 2
+    topcar: "50"
+  tenerife_north:
+    label: "Tenerife North Airport (TFN, Los Rodeos)"
+    autoreisen: 1
+    topcar: "51"
 
-# Office codes (ofi_rec = pickup, ofi_dev = return; see README for the full list).
-#   2 = Tenerife South (TFS).  ofi_dev may also be 9999 = same office.
-bookings:
-  - name: "Tenerife Jan 2027"
-    pickup_office: 2
-    return_office: 2
-    pickup: "2027-01-10 10:00"     # YYYY-MM-DD HH:MM
-    return: "2027-01-17 10:00"
-    group: "A"                     # car group letter; may be left empty if model is set
-    model: ""                      # optional, substring match, e.g. "Panda"
-    paid_eur: 150.00               # <-- what you paid; update after rebooking
-    # min_savings_eur: 5           # optional per-booking override
-    # enabled: false               # optional: pause this booking
+# Canonical car class -> how to match it at each supplier. A car counts as the
+# class when its group is in `groups` AND (if given) its model contains one of
+# `models`. This is your cross-supplier mapping table — edit it as you learn
+# each fleet. Leave a supplier out to skip that class there.
+classes:
+  economy_manual:
+    label: "Economy manual (Seat Ibiza / VW Polo class)"
+    autoreisen: { groups: [C], models: [Ibiza, Polo] }
+    topcar:     { groups: [B, B1], models: [Polo, Rio, Ibiza] }
+  economy_automatic:
+    label: "Economy automatic"
+    autoreisen: { groups: [D], models: [Ibiza, Golf, Polo] }
+    topcar:     { groups: [B1A, BA], models: [Polo, Citroen] }
+
+# One Telegram bot, many users. Each person starts the bot once, then you paste
+# their chat id here (see README). A user can watch several bookings, or none.
+users:
+  - name: "Erwin"
+    telegram_chat_id: ""          # <-- your chat id
+    bookings:
+      - name: "Tenerife Xmas 2026"
+        office: tenerife_south
+        pickup: "2026-12-20 10:00"   # YYYY-MM-DD HH:MM
+        return: "2027-01-21 10:00"
+        car_class: economy_manual
+        paid_eur: 665.00
+        # min_savings_eur: 5         # optional per-booking override
+        # enabled: false             # optional: pause this booking
+
+  - name: "Girlfriend"
+    telegram_chat_id: ""          # <-- her chat id
+    bookings: []                    # add bookings like above
