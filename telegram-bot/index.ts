@@ -11,6 +11,10 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const TG = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const WEBHOOK_SECRET = Deno.env.get("WEBHOOK_SECRET") ?? "";
+// Telegram Payments provider token (Stripe), from BotFather → bot → Payments.
+// When empty, the paywall is off and watches activate for free (dev/legacy).
+const PROVIDER = Deno.env.get("STRIPE_PROVIDER_TOKEN") ?? "";
+const TRACK_PRICE_CENTS = 999; // €9.99 to activate tracking for one booking
 const sb = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -132,21 +136,75 @@ async function listWatches(chat: string) {
   await send(chat, "Add another?", { inline_keyboard: [[{ text: "➕ New watch", callback_data: "new" }]] });
 }
 
+function watchSummary(draft: Draft, paid: number): string {
+  return `${classLabel(draft.car_class)}\n${officeLabel(draft.office)}\n` +
+    `${prettyDate(draft.pickup_date)} ${draft.pickup_time} → ${prettyDate(draft.return_date)} ${draft.return_time}\n` +
+    `Paid: €${paid.toFixed(2)}`;
+}
+
 async function saveWatch(chat: string, name: string, draft: Draft, paid: number) {
-  const { error } = await sb.from("cw_watches").insert({
+  // The watch is only tracked once paid, so it starts inactive (the daily
+  // checker only runs active watches). With no provider token configured the
+  // paywall is off and it activates immediately (dev / early testers).
+  const paywall = PROVIDER !== "";
+  const { data, error } = await sb.from("cw_watches").insert({
     chat_id: chat, user_name: name, office: draft.office,
     pickup: `${draft.pickup_date} ${draft.pickup_time}`,
     dropoff: `${draft.return_date} ${draft.return_time}`,
-    car_class: draft.car_class, paid_eur: paid, active: true,
-  });
+    car_class: draft.car_class, paid_eur: paid,
+    active: !paywall,
+    status: paywall ? "pending_payment" : "active",
+  }).select("id").single();
   await clearState(chat);
-  if (error) { await send(chat, "⚠️ Sorry, couldn't save that. Please try /new again."); return; }
+  if (error || !data) {
+    await send(chat, "⚠️ Sorry, couldn't save that. Please try /new again.");
+    return;
+  }
+
+  if (!paywall) {
+    await send(chat,
+      `✅ Watch created!\n\n${watchSummary(draft, paid)}\n\n` +
+      `I'll check daily and message you if it drops at least €25. It stops automatically the day before pickup.`,
+      { inline_keyboard: [[{ text: "📋 My watches", callback_data: "list" }]] });
+    return;
+  }
+
+  // Paywall on: send an in-chat invoice; payment flips the watch active.
   await send(chat,
-    `✅ Watch created!\n\n` +
-    `${classLabel(draft.car_class)}\n${officeLabel(draft.office)}\n` +
-    `${prettyDate(draft.pickup_date)} ${draft.pickup_time} → ${prettyDate(draft.return_date)} ${draft.return_time}\n` +
-    `Paid: €${paid.toFixed(2)}\n\n` +
-    `I'll check daily and message you if it drops at least €25. It stops automatically the day before pickup.`,
+    `Almost done — here's your booking:\n\n${watchSummary(draft, paid)}\n\n` +
+    `Switch on daily tracking for €9.99 with the invoice below. ` +
+    `I'll watch it until pickup and ping you the moment it drops at least €25.`);
+  const inv = await tg("sendInvoice", {
+    chat_id: chat,
+    title: "Car-rental price tracking",
+    description:
+      `Daily price watch for your ${classLabel(draft.car_class)} ` +
+      `(${prettyDate(draft.pickup_date)} → ${prettyDate(draft.return_date)}). ` +
+      `I alert you the moment it drops at least €25 below what you paid, until pickup.`,
+    payload: `watch:${data.id}`,
+    provider_token: PROVIDER,
+    currency: "EUR",
+    prices: [{ label: "Price tracking until pickup", amount: TRACK_PRICE_CENTS }],
+    start_parameter: "track",
+  });
+  if (inv && inv.ok === false) {
+    console.error("sendInvoice failed", inv);
+    await send(chat, "⚠️ Couldn't start the payment just now. Please try /new again.");
+  }
+}
+
+async function activateWatch(chat: string, sp: any) {
+  const wid = String(sp.invoice_payload || "").replace(/^watch:/, "");
+  if (!wid) return;
+  await sb.from("cw_watches").update({
+    active: true, status: "active", paid_at: new Date().toISOString(),
+    telegram_payment_charge_id: sp.telegram_payment_charge_id ?? null,
+    provider_payment_charge_id: sp.provider_payment_charge_id ?? null,
+  }).eq("id", wid);
+  await send(chat,
+    `✅ Payment received — tracking is ON!\n\n` +
+    `I'll check every day and message you the moment your car drops at least €25 ` +
+    `below what you paid. It stops automatically the day before pickup.`,
     { inline_keyboard: [[{ text: "📋 My watches", callback_data: "list" }]] });
 }
 
@@ -262,7 +320,12 @@ Deno.serve(async (req) => {
   let update: any;
   try { update = await req.json(); } catch { return new Response("ok"); }
   try {
-    if (update.message?.text) {
+    if (update.pre_checkout_query) {
+      // Must be answered within 10s or Telegram fails the payment.
+      await tg("answerPreCheckoutQuery", { pre_checkout_query_id: update.pre_checkout_query.id, ok: true });
+    } else if (update.message?.successful_payment) {
+      await activateWatch(String(update.message.chat.id), update.message.successful_payment);
+    } else if (update.message?.text) {
       const chat = String(update.message.chat.id);
       const name = update.message.from?.first_name || update.message.from?.username || "there";
       await onText(chat, name, update.message.text);
