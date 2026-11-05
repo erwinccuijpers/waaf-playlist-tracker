@@ -39,7 +39,7 @@ classes:
 # their chat id here (see README). A user can watch several bookings, or none.
 users:
   - name: "Erwin"
-    telegram_chat_id: ""          # <-- your chat id
+    telegram_chat_id: "998931850"
     bookings:
       - name: "Tenerife Xmas 2026"
         office: tenerife_south
