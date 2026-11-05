@@ -44,6 +44,22 @@ PRICE_RE = re.compile(
 )
 # "Group A", "Grupo B1", "Gruppe C", "Category D", "Cat. E"
 GROUP_RE = re.compile(r"\b(?:group|grupo|gruppe|groep|category|categor[ií]a|cat\.)\s*:?\s*([A-Z]\d?)\b", re.IGNORECASE)
+# Leading group code, as autoreisen.com writes it: "A- Citröen C3", "C - Seat Ibiza".
+# A single capital (optionally a digit) followed by a dash and then the model text.
+LEADING_GROUP_RE = re.compile(r"^\s*([A-Z]\d?)\s*[-–—]\s*(?=\S)")
+# Same prefix, for stripping it off the model name (keeps the dash out of the result).
+GROUP_PREFIX_RE = re.compile(r"^\s*[A-Z]\d?\s*[-–—]\s*")
+
+
+def group_in(text: str) -> str:
+    """Car group letter from either 'Group A' wording or a leading 'A- …' code."""
+    m = GROUP_RE.search(text) or LEADING_GROUP_RE.match(text)
+    return m.group(1).upper() if m else ""
+
+
+def strip_group_prefix(text: str) -> str:
+    """'A- Citröen C3 5P' -> 'Citröen C3 5P' (leaves text without a prefix alone)."""
+    return GROUP_PREFIX_RE.sub("", text).strip() or text
 
 
 class ParseError(Exception):
@@ -134,11 +150,11 @@ def parse_cars(html: str, selectors: dict | None = None) -> list[dict]:
 
 
 def _guess_car_blocks(soup: BeautifulSoup) -> list:
-    """Smallest elements whose text mentions exactly one car group and a EUR price."""
+    """Smallest elements whose text names a car group and carries a EUR price."""
     candidates = []
     for el in soup.find_all(["div", "article", "li", "tr", "section", "form", "table"]):
         text = el.get_text(" ", strip=True)
-        if len(set(g.upper() for g in GROUP_RE.findall(text))) == 1 and prices_in(text):
+        if group_in(text) and prices_in(text):
             candidates.append(el)
     ids = {id(c) for c in candidates}
     # keep only the innermost: drop a candidate if one of its descendants is also a candidate
@@ -150,12 +166,9 @@ def _parse_block(block, selectors: dict) -> dict | None:
 
     if selectors.get("group"):
         el = block.select_one(selectors["group"])
-        gtext = clean(el.get_text(" ")) if el else ""
-        m = GROUP_RE.search(gtext)
-        group = (m.group(1) if m else gtext).upper()
+        group = group_in(clean(el.get_text(" "))) if el else ""
     else:
-        m = GROUP_RE.search(text)
-        group = m.group(1).upper() if m else ""
+        group = group_in(text)
 
     if selectors.get("price"):
         el = block.select_one(selectors["price"])
@@ -169,6 +182,7 @@ def _parse_block(block, selectors: dict) -> dict | None:
         model = clean(el.get_text(" ")) if el else ""
     else:
         model = _guess_model(block)
+    model = strip_group_prefix(model)
 
     if not group or price is None:
         return None

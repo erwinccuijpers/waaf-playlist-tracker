@@ -4,25 +4,27 @@ min_savings_eur: 3
 
 site:
   # Search-form parameter names for pickup / return TIME.
-  # NOT YET VERIFIED: autoreisen.com could not be reached while this was built.
-  # Open the search form on autoreisen.com, run a search with a non-default
-  # time, and copy the time parameter names from the resulting URL (or the
-  # <select name="..."> in the form). Leave empty to omit time from the URL.
-  pickup_time_param: ""
-  return_time_param: ""
-  time_format: "%H:%M"     # e.g. "%H:%M" -> 10:00, "%H" -> 10
+  # Verified against the car-hire search form on autoreisen.com (Nov 2026):
+  # <select name="hora_inicio"> and <select name="hora_final">, values like "10:00".
+  pickup_time_param: "hora_inicio"
+  return_time_param: "hora_final"
+  time_format: "%H:%M"     # the site's time options are whole hours, e.g. 10:00
   extra_params:
     fin: 1
 
-  # Optional CSS selectors if the automatic parser ever mis-reads the page.
-  # Leave empty to auto-detect car blocks ("Group X" text + € price).
-  # selectors:
-  #   car: "div.car-item"
-  #   group: ".group"
-  #   model: "h3"
-  #   price: ".total-price"
+  # CSS selectors for the real autoreisen.com rates page (verified Nov 2026).
+  # Each car is an <article class="car-feature"> with the group+model in
+  # <strong class="title"> ("A- Citröen C3 5P") and the EUR total inside
+  # the <a class="price"> in the price block. Remove this block to fall back
+  # to auto-detection.
+  selectors:
+    car: "article.car-feature"
+    group: "strong.title"
+    model: "strong.title"
+    price: ".price-block a.price"
 
-# Office codes: 2 = Tenerife South (TFS). See README for others.
+# Office codes (ofi_rec = pickup, ofi_dev = return; see README for the full list).
+#   2 = Tenerife South (TFS).  ofi_dev may also be 9999 = same office.
 bookings:
   - name: "Tenerife Jan 2027"
     pickup_office: 2

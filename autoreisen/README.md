@@ -15,12 +15,10 @@ Files: `watch.py` (the script), `config.yaml` (your bookings), `history.csv`
    `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
 3. Scheduled workflows only run from the **default branch** (`main`), so merge this there.
    Use Actions → "Autoreisen price watch" → *Run workflow* to test it right away.
-4. **Pickup/return time parameters (not yet checked):** this was built without
-   access to autoreisen.com, so the URL parameter names for pickup/return *time*
-   are not known yet. Run a search on the site with a non-default time and look at the
-   resulting URL (or the time `<select name="...">` in the search form), then fill in
-   `site.pickup_time_param` / `return_time_param` in `config.yaml`. Until then the
-   URL is sent without a time. That is fine as long as your rental is in whole days.
+
+The pickup/return time parameters are already filled in (`hora_inicio` / `hora_final`,
+verified against the site's search form), and the parser is tuned to the live page
+layout, so no further setup is needed before the first run.
 
 ## Add a booking
 Add an entry under `bookings:` in `config.yaml`:
@@ -37,9 +35,22 @@ Add an entry under `bookings:` in `config.yaml`:
 ```
 
 Commit and push. Bookings whose pickup date has passed are skipped automatically
-(you can also set `enabled: false`). Office codes: `ofi_rec`/`ofi_dev` on the site;
-2 = Tenerife South. To find the code for another office, pick it on the site and read the
-number from the URL.
+(you can also set `enabled: false`).
+
+### Office codes
+`pickup_office` → `ofi_rec`, `return_office` → `ofi_dev`. Verified Nov 2026:
+
+| Code | Office |
+|------|--------|
+| 2    | Tenerife South Airport (TFS, Reina Sofía) |
+| 1    | Tenerife North Airport (TFN, Los Rodeos) |
+| 18   | Gran Canaria Airport |
+| 3    | Lanzarote Airport |
+| 19   | Fuerteventura Airport |
+
+For `return_office` you can also use `9999` ("same office"). The grey island
+headings in the site's dropdown (102, 118, 103, 119) are labels, not real offices.
+To find any other office, pick it on the site and read the `ofi_rec` number from the URL.
 
 ## After you rebook
 Set `paid_eur` for that booking to the new price you paid and commit. Alerts
