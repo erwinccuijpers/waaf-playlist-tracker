@@ -1,0 +1,41 @@
+# Canary Islands car-rental price watcher — configuration.
+# Alert when the cheapest car (across suppliers) is at least this much below paid.
+min_savings_eur: 25
+
+# Which suppliers to query. Turn one off with: enabled: false
+suppliers:
+  autoreisen: { enabled: true }
+  topcar: { enabled: true }
+
+# Canonical office -> each supplier's own office code.
+# A booking just names one of these keys; add more offices as needed.
+# (To find a supplier's code: pick the office on its site and read it from the
+#  form/URL. autoreisen: numeric ofi_rec. topcar: pick_up_office select value.)
+offices:
+  tenerife_south:
+    label: "Tenerife South Airport (TFS, Reina Sofía)"
+    autoreisen: 2
+    topcar: "50"
+  tenerife_north:
+    label: "Tenerife North Airport (TFN, Los Rodeos)"
+    autoreisen: 1
+    topcar: "51"
+
+# Canonical car class -> how to match it at each supplier. A car counts as the
+# class when its group is in `groups` AND (if given) its model contains one of
+# `models`. This is your cross-supplier mapping table — edit it as you learn
+# each fleet. Leave a supplier out to skip that class there.
+classes:
+  economy_manual:
+    label: "Economy manual (Seat Ibiza / VW Polo class)"
+    autoreisen: { groups: [C], models: [Ibiza, Polo] }
+    topcar:     { groups: [B, B1], models: [Polo, Rio, Ibiza] }
+  economy_automatic:
+    label: "Economy automatic"
+    autoreisen: { groups: [D], models: [Ibiza, Golf, Polo] }
+    topcar:     { groups: [B1A, BA], models: [Polo, Citroen] }
+
+# NOTE: watches are no longer listed here. People create them through the
+# Telegram bot, which stores them in Supabase (public.cw_watches); the checker
+# reads active watches from there. This file only holds the mapping tables
+# above. For local testing without the database, see "Run locally" in README.md.
