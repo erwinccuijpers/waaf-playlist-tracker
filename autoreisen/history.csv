@@ -88,3 +88,9 @@ checked_at,user,booking,supplier,group,model,price_eur,paid_eur,cheapest,alerted
 2026-11-20 16:51,Ilke,tenerife_south 2026-12-20,topcar,B,KIA RIO,1077.90,663.00,no,no
 2026-11-20 16:51,Growing,tenerife_south 2026-11-29,autoreisen,C,Seat Ibiza 5P,325.91,325.91,yes,no
 2026-11-20 16:51,Growing,tenerife_south 2026-11-29,topcar,B,KIA RIO,359.57,325.91,no,no
+2026-11-21 16:00,Growing,tenerife_south 2026-12-20,autoreisen,C,Seat Ibiza 5P,663.28,663.00,yes,no
+2026-11-21 16:00,Growing,tenerife_south 2026-12-20,topcar,B,KIA RIO,1077.90,663.00,no,no
+2026-11-21 16:00,Ilke,tenerife_south 2026-12-20,autoreisen,C,Seat Ibiza 5P,663.28,663.00,yes,no
+2026-11-21 16:00,Ilke,tenerife_south 2026-12-20,topcar,B,KIA RIO,1077.90,663.00,no,no
+2026-11-21 16:00,Growing,tenerife_south 2026-11-29,autoreisen,C,Seat Ibiza 5P,325.91,325.91,yes,no
+2026-11-21 16:00,Growing,tenerife_south 2026-11-29,topcar,B,KIA RIO,359.57,325.91,no,no
